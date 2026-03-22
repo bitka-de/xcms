@@ -37,9 +37,11 @@ class Response
         return $this;
     }
 
-    public function html(string $content, int $status = 200): self
+    public function html(string $content, ?int $status = null): self
     {
-        $this->statusCode = $status;
+        if ($status !== null) {
+            $this->statusCode = $status;
+        }
         $this->body = $content;
         return $this;
     }
