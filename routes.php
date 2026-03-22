@@ -20,5 +20,8 @@ return [
     '/admin/collections' => ['controller' => 'Admin\\CollectionAdminController', 'action' => 'index'],
     '/admin/collections/create' => ['controller' => 'Admin\\CollectionAdminController', 'action' => 'create'],
     '/admin/collections/:id/edit' => ['controller' => 'Admin\\CollectionAdminController', 'action' => 'edit'],
+    '/admin/collections/:collectionId/entries' => ['controller' => 'Admin\\CollectionEntryAdminController', 'action' => 'index'],
+    '/admin/collections/:collectionId/entries/create' => ['controller' => 'Admin\\CollectionEntryAdminController', 'action' => 'create'],
+    '/admin/collections/:collectionId/entries/:id/edit' => ['controller' => 'Admin\\CollectionEntryAdminController', 'action' => 'edit'],
     '/admin/design' => ['controller' => 'Admin\\DesignAdminController', 'action' => 'edit'],
 ];

@@ -33,6 +33,37 @@
         <h3>Collection Entries</h3>
         <p>Manage items stored in this collection.</p>
         <p><a href="/admin/collections/<?= (int) $collection->id ?>/entries/create">Add entry</a></p>
-        <p><a href="/admin/collections/<?= (int) $collection->id ?>/entries">View entries</a></p>
+
+        <?php if (empty($entries)): ?>
+            <p>No entries yet.</p>
+        <?php else: ?>
+            <table class="admin-table">
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($entries as $entry): ?>
+                    <tr>
+                        <td><?= (int) $entry->id ?></td>
+                        <td><?= htmlspecialchars((string) $entry->status, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                        <td><?= htmlspecialchars((string) ($entry->updated_at ?? '-'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                        <td>
+                            <a href="/admin/collections/<?= (int) $collection->id ?>/entries/<?= (int) $entry->id ?>/edit">Edit</a>
+                            <form method="post" action="/admin/collections/<?= (int) $collection->id ?>/entries" class="inline-form" onsubmit="return confirm('Delete this entry?');">
+                                <input type="hidden" name="_action" value="delete">
+                                <input type="hidden" name="id" value="<?= (int) $entry->id ?>">
+                                <button type="submit" class="link-button">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
     </section>
 </section>

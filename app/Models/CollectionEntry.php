@@ -7,6 +7,7 @@ class CollectionEntry
     public ?int $id = null;
     public int $collection_id;
     public string $data_json = '{}'; // The actual entry data
+    public string $status = 'draft';
     public ?string $created_at = null;
     public ?string $updated_at = null;
 
@@ -31,6 +32,7 @@ class CollectionEntry
             'id' => $this->id,
             'collection_id' => $this->collection_id,
             'data_json' => $this->data_json,
+            'status' => $this->status,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

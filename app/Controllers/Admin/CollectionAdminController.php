@@ -6,16 +6,19 @@ use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
 use App\Models\CmsCollection;
+use App\Repositories\CollectionEntryRepository;
 use App\Repositories\CollectionRepository;
 
 class CollectionAdminController extends Controller
 {
     private CollectionRepository $collectionRepository;
+    private CollectionEntryRepository $collectionEntryRepository;
 
     public function __construct(Request $request, Response $response)
     {
         parent::__construct($request, $response);
         $this->collectionRepository = new CollectionRepository();
+        $this->collectionEntryRepository = new CollectionEntryRepository();
     }
 
     public function index(): void
@@ -114,6 +117,7 @@ class CollectionAdminController extends Controller
                 $this->render('admin/collections/edit', [
                     'pageTitle' => 'Edit Collection',
                     'collection' => $collection,
+                    'entries' => $this->collectionEntryRepository->findByCollectionId((int) $collection->id),
                     'form' => $data,
                     'errors' => $errors,
                     'flash' => [
@@ -129,6 +133,7 @@ class CollectionAdminController extends Controller
                 $this->render('admin/collections/edit', [
                     'pageTitle' => 'Edit Collection',
                     'collection' => $collection,
+                    'entries' => $this->collectionEntryRepository->findByCollectionId((int) $collection->id),
                     'form' => $data,
                     'errors' => ['slug' => 'Slug already exists.'],
                     'flash' => [
@@ -151,6 +156,7 @@ class CollectionAdminController extends Controller
         $this->render('admin/collections/edit', [
             'pageTitle' => 'Edit Collection',
             'collection' => $collection,
+            'entries' => $this->collectionEntryRepository->findByCollectionId((int) $collection->id),
             'form' => [
                 'name' => $collection->name,
                 'slug' => $collection->key,
