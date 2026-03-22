@@ -127,6 +127,90 @@ body {
     color: #b91c1c;
 }
 
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.admin-table th,
+.admin-table td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid #e5e7eb;
+    vertical-align: middle;
+}
+
+.admin-table th {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7280;
+}
+
+.admin-form {
+    display: grid;
+    gap: 14px;
+}
+
+.admin-form label {
+    display: grid;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.admin-form input,
+.admin-form select,
+.admin-form textarea {
+    width: 100%;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 10px;
+    font: inherit;
+    background: #fff;
+}
+
+.field-error {
+    color: #b91c1c;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.form-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.form-actions button {
+    background: #2563eb;
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+}
+
+.form-actions a {
+    color: #374151;
+    text-decoration: none;
+}
+
+.inline-form {
+    display: inline;
+    margin-left: 10px;
+}
+
+.link-button {
+    border: 0;
+    background: transparent;
+    color: #b91c1c;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+}
+
 @media (max-width: 860px) {
     .admin-shell {
         grid-template-columns: 1fr;

@@ -44,8 +44,14 @@ abstract class BaseRepository
     {
         $data = $model->toArray();
         unset($data['id']);
-        unset($data['created_at']);
-        unset($data['updated_at']);
+
+        $now = date('c');
+        if (array_key_exists('created_at', $data) && empty($data['created_at'])) {
+            $data['created_at'] = $now;
+        }
+        if (array_key_exists('updated_at', $data) && empty($data['updated_at'])) {
+            $data['updated_at'] = $now;
+        }
 
         $fields = array_keys($data);
         $placeholders = array_fill(0, count($fields), '?');
@@ -66,7 +72,10 @@ abstract class BaseRepository
         $data = $model->toArray();
         unset($data['id']);
         unset($data['created_at']);
-        unset($data['updated_at']);
+
+        if (array_key_exists('updated_at', $data)) {
+            $data['updated_at'] = date('c');
+        }
 
         $fields = array_keys($data);
         $setParts = array_map(fn($f) => "$f = ?", $fields);
