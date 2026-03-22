@@ -68,10 +68,6 @@ class PageRenderer
         $designSettings = $this->designSettingRepository->getAllAsKeyValue();
         $designCss = $this->buildDesignCssVariables($designSettings);
 
-        if ($designCss !== '') {
-            array_unshift($cssParts, $designCss);
-        }
-
         return [
             'page' => $page,
             'page_array' => $page->toArray(),

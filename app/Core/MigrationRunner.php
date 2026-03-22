@@ -3,6 +3,7 @@
 namespace App\Core;
 
 use PDO;
+use PDOException;
 
 class MigrationRunner
 {
@@ -98,7 +99,38 @@ class MigrationRunner
             return;
         }
 
-        $this->db->exec($sql);
+        $statements = array_filter(
+            array_map('trim', explode(';', $sql)),
+            static fn(string $statement): bool => $statement !== ''
+        );
+
+        foreach ($statements as $statement) {
+            try {
+                $this->db->exec($statement);
+            } catch (PDOException $exception) {
+                if ($this->shouldIgnoreStatementError($statement, $exception)) {
+                    continue;
+                }
+
+                throw $exception;
+            }
+        }
+    }
+
+    private function shouldIgnoreStatementError(string $statement, PDOException $exception): bool
+    {
+        $message = strtolower($exception->getMessage());
+        $normalizedStatement = strtoupper(trim($statement));
+
+        if (str_starts_with($normalizedStatement, 'ALTER TABLE') && str_contains($message, 'duplicate column name')) {
+            return true;
+        }
+
+        if (str_starts_with($normalizedStatement, 'CREATE INDEX') && str_contains($message, 'already exists')) {
+            return true;
+        }
+
+        return false;
     }
 
     private function recordMigration(string $file): void

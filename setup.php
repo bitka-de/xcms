@@ -1,5 +1,10 @@
 <?php
 
+$dbPathBeforeBootstrap = __DIR__ . '/storage/database.sqlite';
+$dbDirBeforeBootstrap = dirname($dbPathBeforeBootstrap);
+$storageExisted = is_dir($dbDirBeforeBootstrap);
+$databaseExisted = file_exists($dbPathBeforeBootstrap);
+
 require_once __DIR__ . '/bootstrap.php';
 
 use App\Core\Config;
@@ -11,13 +16,13 @@ echo "=== xcms setup ===\n";
 $dbPath = Config::get('database_path');
 $dbDir = dirname($dbPath);
 
-if (!is_dir($dbDir)) {
-    mkdir($dbDir, 0755, true);
+if (!$storageExisted && is_dir($dbDir)) {
     echo "[OK]   Created storage directory: $dbDir\n";
+} else {
+    echo "[INFO] Storage directory ready: $dbDir\n";
 }
 
-if (!file_exists($dbPath)) {
-    touch($dbPath);
+if (!$databaseExisted && file_exists($dbPath)) {
     echo "[OK]   Created database file: $dbPath\n";
 } else {
     echo "[INFO] Database file exists: $dbPath\n";
