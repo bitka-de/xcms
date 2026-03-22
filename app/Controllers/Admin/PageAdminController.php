@@ -4,16 +4,23 @@ namespace App\Controllers\Admin;
 
 use App\Core\Controller;
 use App\Models\Page;
+use App\Models\PageBlock;
+use App\Repositories\BlockTypeRepository;
+use App\Repositories\PageBlockRepository;
 use App\Repositories\PageRepository;
 
 class PageAdminController extends Controller
 {
     private PageRepository $pageRepository;
+    private PageBlockRepository $pageBlockRepository;
+    private BlockTypeRepository $blockTypeRepository;
 
     public function __construct(\App\Core\Request $request, \App\Core\Response $response)
     {
         parent::__construct($request, $response);
         $this->pageRepository = new PageRepository();
+        $this->pageBlockRepository = new PageBlockRepository();
+        $this->blockTypeRepository = new BlockTypeRepository();
     }
 
     public function index(): void
@@ -115,6 +122,23 @@ class PageAdminController extends Controller
         }
 
         if ($this->request->isPost()) {
+            $action = (string) $this->request->getPost('_action', 'save_page');
+
+            if ($action === 'add_block') {
+                $this->handleAddBlock($page);
+                return;
+            }
+
+            if ($action === 'update_block') {
+                $this->handleUpdateBlock($page);
+                return;
+            }
+
+            if ($action === 'delete_block') {
+                $this->handleDeleteBlock($page);
+                return;
+            }
+
             $data = [
                 'title' => trim((string) $this->request->getPost('title', '')),
                 'slug' => trim((string) $this->request->getPost('slug', '')),
@@ -125,31 +149,19 @@ class PageAdminController extends Controller
 
             $errors = $this->validate($data);
             if ($errors !== []) {
-                $this->render('admin/pages/edit', [
-                    'pageTitle' => 'Edit Page',
-                    'page' => $page,
-                    'form' => $data,
-                    'errors' => $errors,
-                    'flash' => [
-                        'type' => 'error',
-                        'message' => 'Please fix the validation errors.',
-                    ],
-                ], 'admin');
+                $this->renderEditPage($page, $data, $errors, [
+                    'type' => 'error',
+                    'message' => 'Please fix the validation errors.',
+                ]);
                 return;
             }
 
             $existingWithSlug = $this->pageRepository->findBySlug($data['slug']);
             if ($existingWithSlug !== null && (int) $existingWithSlug->id !== (int) $page->id) {
-                $this->render('admin/pages/edit', [
-                    'pageTitle' => 'Edit Page',
-                    'page' => $page,
-                    'form' => $data,
-                    'errors' => ['slug' => 'Slug already exists.'],
-                    'flash' => [
-                        'type' => 'error',
-                        'message' => 'Slug already exists.',
-                    ],
-                ], 'admin');
+                $this->renderEditPage($page, $data, ['slug' => 'Slug already exists.'], [
+                    'type' => 'error',
+                    'message' => 'Slug already exists.',
+                ]);
                 return;
             }
 
@@ -164,19 +176,87 @@ class PageAdminController extends Controller
             return;
         }
 
-        $this->render('admin/pages/edit', [
-            'pageTitle' => 'Edit Page',
-            'page' => $page,
-            'form' => [
+        $this->renderEditPage(
+            $page,
+            [
                 'title' => $page->title,
                 'slug' => $page->slug,
                 'visibility' => $page->visibility,
                 'seo_title' => $page->seo_title ?? '',
                 'seo_description' => $page->seo_description ?? '',
             ],
-            'errors' => [],
-            'flash' => $this->readFlashFromQuery(),
-        ], 'admin');
+            [],
+            $this->readFlashFromQuery()
+        );
+    }
+
+    private function handleAddBlock(Page $page): void
+    {
+        $blockData = $this->getBlockFormData();
+        $errors = $this->validateBlockData($blockData);
+
+        if ($errors !== []) {
+            $this->renderEditPage($page, $this->pageFormFromPage($page), [], [
+                'type' => 'error',
+                'message' => 'Please fix the block validation errors.',
+            ], $errors, $blockData);
+            return;
+        }
+
+        $pageBlock = new PageBlock([
+            'page_id' => (int) $page->id,
+            'block_type_id' => (int) $blockData['block_type_id'],
+            'sort_order' => (int) $blockData['sort_order'],
+            'props_json' => $blockData['props_json'],
+            'bindings_json' => $blockData['bindings_json'],
+        ]);
+
+        $this->pageBlockRepository->save($pageBlock);
+        $this->redirect('/admin/pages/' . $page->id . '/edit?success=Block+added');
+    }
+
+    private function handleUpdateBlock(Page $page): void
+    {
+        $blockId = (int) $this->request->getPost('block_id', 0);
+        $pageBlock = $this->pageBlockRepository->find($blockId);
+
+        if ($pageBlock === null || (int) $pageBlock->page_id !== (int) $page->id) {
+            $this->redirect('/admin/pages/' . $page->id . '/edit?error=Block+not+found');
+            return;
+        }
+
+        $blockData = $this->getBlockFormData();
+        $errors = $this->validateBlockData($blockData);
+
+        if ($errors !== []) {
+            $this->renderEditPage($page, $this->pageFormFromPage($page), [], [
+                'type' => 'error',
+                'message' => 'Please fix the block validation errors.',
+            ], ['existing_' . $blockId => $errors], []);
+            return;
+        }
+
+        $pageBlock->block_type_id = (int) $blockData['block_type_id'];
+        $pageBlock->sort_order = (int) $blockData['sort_order'];
+        $pageBlock->props_json = $blockData['props_json'];
+        $pageBlock->bindings_json = $blockData['bindings_json'];
+
+        $this->pageBlockRepository->save($pageBlock);
+        $this->redirect('/admin/pages/' . $page->id . '/edit?success=Block+updated');
+    }
+
+    private function handleDeleteBlock(Page $page): void
+    {
+        $blockId = (int) $this->request->getPost('block_id', 0);
+        $pageBlock = $this->pageBlockRepository->find($blockId);
+
+        if ($pageBlock === null || (int) $pageBlock->page_id !== (int) $page->id) {
+            $this->redirect('/admin/pages/' . $page->id . '/edit?error=Block+not+found');
+            return;
+        }
+
+        $this->pageBlockRepository->delete($blockId);
+        $this->redirect('/admin/pages/' . $page->id . '/edit?success=Block+deleted');
     }
 
     private function handleDelete(): void
@@ -217,6 +297,88 @@ class PageAdminController extends Controller
         }
 
         return $errors;
+    }
+
+    private function getBlockFormData(): array
+    {
+        return [
+            'block_type_id' => (string) $this->request->getPost('block_type_id', ''),
+            'sort_order' => (string) $this->request->getPost('sort_order', '0'),
+            'props_json' => (string) $this->request->getPost('props_json', '{}'),
+            'bindings_json' => (string) $this->request->getPost('bindings_json', '{}'),
+        ];
+    }
+
+    private function validateBlockData(array $data): array
+    {
+        $errors = [];
+
+        $blockTypeId = (int) $data['block_type_id'];
+        if ($blockTypeId <= 0 || $this->blockTypeRepository->find($blockTypeId) === null) {
+            $errors['block_type_id'] = 'A valid block type is required.';
+        }
+
+        if (filter_var($data['sort_order'], FILTER_VALIDATE_INT) === false) {
+            $errors['sort_order'] = 'Sort order must be an integer.';
+        }
+
+        json_decode($data['props_json'], true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $errors['props_json'] = 'Props JSON must be valid JSON.';
+        }
+
+        json_decode($data['bindings_json'], true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $errors['bindings_json'] = 'Bindings JSON must be valid JSON.';
+        }
+
+        return $errors;
+    }
+
+    private function renderEditPage(
+        Page $page,
+        array $form,
+        array $errors,
+        ?array $flash = null,
+        array $blockErrors = [],
+        array $newBlockForm = []
+    ): void {
+        $pageBlocks = $this->pageBlockRepository->findByPageIdOrdered((int) $page->id);
+        $blockTypes = $this->blockTypeRepository->getAllByName();
+
+        $blockTypeMap = [];
+        foreach ($blockTypes as $blockType) {
+            $blockTypeMap[(int) $blockType->id] = $blockType;
+        }
+
+        $this->render('admin/pages/edit', [
+            'pageTitle' => 'Edit Page',
+            'page' => $page,
+            'form' => $form,
+            'errors' => $errors,
+            'flash' => $flash,
+            'pageBlocks' => $pageBlocks,
+            'blockTypes' => $blockTypes,
+            'blockTypeMap' => $blockTypeMap,
+            'blockErrors' => $blockErrors,
+            'newBlockForm' => $newBlockForm !== [] ? $newBlockForm : [
+                'block_type_id' => '',
+                'sort_order' => (string) ($this->pageBlockRepository->getMaxSortOrderForPage((int) $page->id) + 1),
+                'props_json' => '{}',
+                'bindings_json' => '{}',
+            ],
+        ], 'admin');
+    }
+
+    private function pageFormFromPage(Page $page): array
+    {
+        return [
+            'title' => $page->title,
+            'slug' => $page->slug,
+            'visibility' => $page->visibility,
+            'seo_title' => $page->seo_title ?? '',
+            'seo_description' => $page->seo_description ?? '',
+        ];
     }
 
     private function readFlashFromQuery(): ?array

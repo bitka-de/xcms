@@ -5,6 +5,8 @@
 
 <section class="admin-grid">
     <form method="post" action="/admin/pages/<?= (int) $page->id ?>/edit" class="stat-card admin-form">
+        <input type="hidden" name="_action" value="save_page">
+
         <label>
             Title *
             <input type="text" name="title" value="<?= htmlspecialchars((string) ($form['title'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" required>
@@ -44,9 +46,111 @@
         </div>
     </form>
 
-    <section class="stat-card">
+    <section class="stat-card admin-form">
         <h3>Block Management</h3>
-        <p>This section is reserved for managing blocks on this page.</p>
-        <p>Block add/edit/sort tools will be added in the next step.</p>
+        <p>Manage block instances for this page. Blocks are rendered in ascending <code>sort_order</code>.</p>
+
+        <h4>Existing Blocks</h4>
+        <?php if (empty($pageBlocks)): ?>
+            <p>No blocks added yet.</p>
+        <?php else: ?>
+            <?php foreach ($pageBlocks as $pageBlock): ?>
+                <?php
+                $blockType = $blockTypeMap[(int) $pageBlock->block_type_id] ?? null;
+                $existingErrors = $blockErrors['existing_' . (int) $pageBlock->id] ?? [];
+                ?>
+                <form method="post" action="/admin/pages/<?= (int) $page->id ?>/edit" class="stat-card admin-form">
+                    <input type="hidden" name="_action" value="update_block">
+                    <input type="hidden" name="block_id" value="<?= (int) $pageBlock->id ?>">
+
+                    <p>
+                        <strong>Block #<?= (int) $pageBlock->id ?></strong>
+                        <?php if ($blockType !== null): ?>
+                            <span> - <?= htmlspecialchars((string) $blockType->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></span>
+                        <?php endif; ?>
+                    </p>
+
+                    <label>
+                        Block Type
+                        <select name="block_type_id" required>
+                            <?php foreach ($blockTypes as $type): ?>
+                                <option value="<?= (int) $type->id ?>" <?= (int) $type->id === (int) $pageBlock->block_type_id ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars((string) $type->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <?php if (!empty($existingErrors['block_type_id'])): ?><small class="field-error"><?= htmlspecialchars((string) $existingErrors['block_type_id'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+                    </label>
+
+                    <label>
+                        Sort Order
+                        <input type="number" name="sort_order" value="<?= (int) $pageBlock->sort_order ?>" required>
+                        <?php if (!empty($existingErrors['sort_order'])): ?><small class="field-error"><?= htmlspecialchars((string) $existingErrors['sort_order'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+                    </label>
+
+                    <label>
+                        Props JSON
+                        <textarea name="props_json" rows="6"><?= htmlspecialchars((string) $pageBlock->props_json, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></textarea>
+                        <?php if (!empty($existingErrors['props_json'])): ?><small class="field-error"><?= htmlspecialchars((string) $existingErrors['props_json'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+                    </label>
+
+                    <label>
+                        Bindings JSON
+                        <textarea name="bindings_json" rows="6"><?= htmlspecialchars((string) $pageBlock->bindings_json, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></textarea>
+                        <?php if (!empty($existingErrors['bindings_json'])): ?><small class="field-error"><?= htmlspecialchars((string) $existingErrors['bindings_json'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+                    </label>
+
+                    <div class="form-actions">
+                        <button type="submit">Save Block</button>
+                    </div>
+                </form>
+
+                <form method="post" action="/admin/pages/<?= (int) $page->id ?>/edit" class="inline-form" onsubmit="return confirm('Delete this block instance?');">
+                    <input type="hidden" name="_action" value="delete_block">
+                    <input type="hidden" name="block_id" value="<?= (int) $pageBlock->id ?>">
+                    <button type="submit" class="link-button">Delete Block</button>
+                </form>
+            <?php endforeach; ?>
+        <?php endif; ?>
+
+        <h4>Add New Block</h4>
+        <form method="post" action="/admin/pages/<?= (int) $page->id ?>/edit" class="stat-card admin-form">
+            <input type="hidden" name="_action" value="add_block">
+
+            <label>
+                Block Type
+                <select name="block_type_id" required>
+                    <option value="">Select a block type</option>
+                    <?php foreach ($blockTypes as $type): ?>
+                        <option value="<?= (int) $type->id ?>" <?= (string) ($newBlockForm['block_type_id'] ?? '') === (string) $type->id ? 'selected' : '' ?>>
+                            <?= htmlspecialchars((string) $type->name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <?php if (!empty($blockErrors['block_type_id'])): ?><small class="field-error"><?= htmlspecialchars((string) $blockErrors['block_type_id'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+            </label>
+
+            <label>
+                Sort Order
+                <input type="number" name="sort_order" value="<?= htmlspecialchars((string) ($newBlockForm['sort_order'] ?? '0'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" required>
+                <?php if (!empty($blockErrors['sort_order'])): ?><small class="field-error"><?= htmlspecialchars((string) $blockErrors['sort_order'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+            </label>
+
+            <label>
+                Props JSON
+                <textarea name="props_json" rows="6"><?= htmlspecialchars((string) ($newBlockForm['props_json'] ?? '{}'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></textarea>
+                <?php if (!empty($blockErrors['props_json'])): ?><small class="field-error"><?= htmlspecialchars((string) $blockErrors['props_json'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+            </label>
+
+            <label>
+                Bindings JSON
+                <textarea name="bindings_json" rows="6"><?= htmlspecialchars((string) ($newBlockForm['bindings_json'] ?? '{}'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></textarea>
+                <?php if (!empty($blockErrors['bindings_json'])): ?><small class="field-error"><?= htmlspecialchars((string) $blockErrors['bindings_json'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+            </label>
+
+            <div class="form-actions">
+                <button type="submit">Add Block</button>
+            </div>
+        </form>
     </section>
 </section>
