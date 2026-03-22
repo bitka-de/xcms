@@ -7,106 +7,103 @@ use PDO;
 class MigrationRunner
 {
     private PDO $db;
+    private string $migrationsPath;
 
     public function __construct()
     {
         $this->db = Database::connection();
+        $this->migrationsPath = dirname(__DIR__, 2) . '/database/migrations';
     }
 
     public function run(): void
     {
-        $this->createTables();
-        echo "Database migrations completed.\n";
+        $this->ensureMigrationsTable();
+
+        $files = $this->getMigrationFiles();
+
+        if ($files === []) {
+            echo "[INFO] No migration files found.\n";
+            return;
+        }
+
+        $executed = 0;
+
+        foreach ($files as $file) {
+            if ($this->hasRun($file)) {
+                echo "[SKIP] {$file} (already run)\n";
+                continue;
+            }
+
+            echo "[RUN]  {$file}\n";
+            $this->executeFile($file);
+            $this->recordMigration($file);
+            $executed++;
+        }
+
+        if ($executed === 0) {
+            echo "[INFO] All migrations up to date.\n";
+            return;
+        }
+
+        echo "[OK]   {$executed} migration(s) executed.\n";
     }
 
-    private function createTables(): void
+    private function ensureMigrationsTable(): void
     {
-        // Pages table
-        $this->db->exec("
-            CREATE TABLE IF NOT EXISTS pages (
+        $sql = "
+            CREATE TABLE IF NOT EXISTS migrations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slug TEXT UNIQUE NOT NULL,
-                title TEXT NOT NULL,
-                description TEXT,
-                visibility TEXT DEFAULT 'draft' CHECK (visibility IN ('public', 'draft', 'hidden')),
-                seo_title TEXT,
-                seo_description TEXT,
-                created_at TEXT,
-                updated_at TEXT
+                migration TEXT NOT NULL UNIQUE,
+                executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
-        ");
+        ";
 
-        // Block types table
-        $this->db->exec("
-            CREATE TABLE IF NOT EXISTS block_types (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                key TEXT UNIQUE NOT NULL,
-                description TEXT,
-                html_template TEXT NOT NULL,
-                css_template TEXT,
-                js_template TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )
-        ");
+        $this->db->exec($sql);
+    }
 
-        // Page blocks table
-        $this->db->exec("
-            CREATE TABLE IF NOT EXISTS page_blocks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                page_id INTEGER NOT NULL,
-                block_type_id INTEGER NOT NULL,
-                sort_order INTEGER DEFAULT 0,
-                props_json TEXT DEFAULT '{}',
-                bindings_json TEXT DEFAULT '{}',
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY (page_id) REFERENCES pages (id) ON DELETE CASCADE,
-                FOREIGN KEY (block_type_id) REFERENCES block_types (id)
-            )
-        ");
+    private function getMigrationFiles(): array
+    {
+        if (!is_dir($this->migrationsPath)) {
+            return [];
+        }
 
-        // Collections table
-        $this->db->exec("
-            CREATE TABLE IF NOT EXISTS collections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                key TEXT UNIQUE NOT NULL,
-                description TEXT,
-                schema_json TEXT DEFAULT '{}',
-                created_at TEXT,
-                updated_at TEXT
-            )
-        ");
+        $files = array_filter(
+            scandir($this->migrationsPath),
+            static fn(string $name): bool => str_ends_with($name, '.sql')
+        );
 
-        // Collection entries table
-        $this->db->exec("
-            CREATE TABLE IF NOT EXISTS collection_entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                collection_id INTEGER NOT NULL,
-                data_json TEXT DEFAULT '{}',
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY (collection_id) REFERENCES collections (id) ON DELETE CASCADE
-            )
-        ");
+        sort($files, SORT_STRING);
 
-        // Design settings table
-        $this->db->exec("
-            CREATE TABLE IF NOT EXISTS design_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT UNIQUE NOT NULL,
-                value TEXT NOT NULL,
-                type TEXT DEFAULT 'text',
-                created_at TEXT,
-                updated_at TEXT
-            )
-        ");
+        return array_values($files);
+    }
 
-        // Create indexes
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_pages_visibility ON pages(visibility)");
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_page_blocks_page_id ON page_blocks(page_id)");
-        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_collection_entries_collection ON collection_entries(collection_id)");
+    private function hasRun(string $file): bool
+    {
+        $stmt = $this->db->prepare('SELECT 1 FROM migrations WHERE migration = ? LIMIT 1');
+        $stmt->execute([$file]);
+
+        return (bool) $stmt->fetchColumn();
+    }
+
+    private function executeFile(string $file): void
+    {
+        $path = $this->migrationsPath . '/' . $file;
+        $sql = file_get_contents($path);
+
+        if ($sql === false) {
+            throw new \RuntimeException("Unable to read migration file: {$path}");
+        }
+
+        if (trim($sql) === '') {
+            return;
+        }
+
+        $this->db->exec($sql);
+    }
+
+    private function recordMigration(string $file): void
+    {
+        $stmt = $this->db->prepare('INSERT INTO migrations (migration) VALUES (?)');
+        $stmt->execute([$file]);
     }
 }
