@@ -1,0 +1,142 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: "Segoe UI", Tahoma, sans-serif;
+    background: #f6f7fb;
+    color: #1f2937;
+}
+
+.admin-shell {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 240px 1fr;
+}
+
+.admin-sidebar {
+    background: #111827;
+    color: #e5e7eb;
+    padding: 24px 16px;
+}
+
+.admin-logo {
+    margin: 0 0 20px;
+    font-size: 20px;
+    font-weight: 700;
+    color: #f9fafb;
+}
+
+.admin-nav ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 8px;
+}
+
+.admin-nav a {
+    display: block;
+    padding: 10px 12px;
+    border-radius: 8px;
+    color: #d1d5db;
+    text-decoration: none;
+}
+
+.admin-nav a:hover {
+    background: #1f2937;
+    color: #ffffff;
+}
+
+.admin-main {
+    padding: 28px;
+}
+
+.admin-page-header h2 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.admin-page-header p {
+    margin: 8px 0 0;
+    color: #4b5563;
+}
+
+.admin-grid {
+    margin-top: 24px;
+    display: grid;
+    gap: 16px;
+}
+
+.stats-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.stat-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 18px;
+}
+
+.stat-card h3 {
+    margin: 0;
+    font-size: 15px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.stat-value {
+    margin: 10px 0;
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1;
+    color: #111827;
+}
+
+.stat-card a {
+    color: #2563eb;
+    text-decoration: none;
+}
+
+.stat-card a:hover {
+    text-decoration: underline;
+}
+
+.flash {
+    margin-bottom: 18px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+
+.flash-success {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #047857;
+}
+
+.flash-error {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #b91c1c;
+}
+
+@media (max-width: 860px) {
+    .admin-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-sidebar {
+        padding: 16px;
+    }
+
+    .admin-main {
+        padding: 16px;
+    }
+}
