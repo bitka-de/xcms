@@ -7,7 +7,7 @@
     <form method="post" action="/admin/media/upload" enctype="multipart/form-data" class="stat-card admin-form">
         <label>
             File *
-            <input type="file" name="file" accept=".jpg,.jpeg,.png,.webp,.gif,.svg,.mp4,.webm,.mov,.pdf" required>
+            <input type="file" name="file" accept=".jpg,.jpeg,.png,.webp,.gif,.svg,.mp4,.webm,.mov,.mp3,.wav,.ogg,.m4a,.pdf" required>
             <?php if (!empty($errors['file'])): ?><small class="field-error"><?= htmlspecialchars((string) $errors['file'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
         </label>
 

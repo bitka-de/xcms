@@ -471,7 +471,7 @@ class MediaAdminController extends Controller
         }
 
         $type = trim((string) $this->request->getQuery('type', ''));
-        if (!in_array($type, ['image', 'video', 'document'], true)) {
+        if (!in_array($type, ['image', 'video', 'audio', 'document'], true)) {
             $type = '';
         }
 

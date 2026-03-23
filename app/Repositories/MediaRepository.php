@@ -52,7 +52,7 @@ class MediaRepository extends BaseRepository
             $params[] = $tagId;
         }
 
-        if (in_array($type, ['image', 'video', 'document'], true)) {
+        if (in_array($type, ['image', 'video', 'audio', 'document'], true)) {
             $whereParts[] = 'm.type = ?';
             $params[] = $type;
         }

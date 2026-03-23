@@ -18,6 +18,10 @@ class MediaStorageService
         'mp4',
         'webm',
         'mov',
+        'mp3',
+        'wav',
+        'ogg',
+        'm4a',
         'pdf',
     ];
 
@@ -45,6 +49,10 @@ class MediaStorageService
         'mp4' => ['video/mp4'],
         'webm' => ['video/webm'],
         'mov' => ['video/quicktime'],
+        'mp3' => ['audio/mpeg', 'audio/mp3', 'audio/x-mp3', 'audio/x-mpeg'],
+        'wav' => ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave'],
+        'ogg' => ['audio/ogg', 'application/ogg'],
+        'm4a' => ['audio/mp4', 'audio/x-m4a', 'audio/m4a'],
         'pdf' => ['application/pdf'],
     ];
 
@@ -142,7 +150,7 @@ class MediaStorageService
             'extension' => $extension,
             'file_size' => (int) filesize($absolutePath),
             'path' => '/' . $relativePath,
-            'type' => $this->resolveType($mimeType),
+            'type' => $this->resolveType($mimeType, $extension),
             'default_title' => $this->humanize($baseName),
             'width' => $dimensions['width'],
             'height' => $dimensions['height'],
@@ -260,7 +268,7 @@ class MediaStorageService
         return $mimeType;
     }
 
-    private function resolveType(string $mimeType): string
+    private function resolveType(string $mimeType, string $extension): string
     {
         if (str_starts_with($mimeType, 'image/')) {
             return 'image';
@@ -268,6 +276,14 @@ class MediaStorageService
 
         if (str_starts_with($mimeType, 'video/')) {
             return 'video';
+        }
+
+        if (str_starts_with($mimeType, 'audio/')) {
+            return 'audio';
+        }
+
+        if (in_array(strtolower($extension), ['mp3', 'wav', 'ogg', 'm4a'], true)) {
+            return 'audio';
         }
 
         return 'document';

@@ -91,6 +91,11 @@ class Media
         return $this->type === 'video';
     }
 
+    public function isAudio(): bool
+    {
+        return $this->type === 'audio';
+    }
+
     public function isDocument(): bool
     {
         return $this->type === 'document';
