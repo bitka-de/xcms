@@ -21,6 +21,13 @@ $selectedType     = (string) ($selectedType ?? '');
 $searchQuery      = (string) ($searchQuery ?? '');
 $hasFilters       = $searchQuery !== '' || $selectedFolderId > 0 || $selectedTagId > 0 || $selectedType !== '';
 $itemCount        = count($mediaItems);
+
+$quotaService = new \App\Services\StorageQuotaService(new \App\Repositories\MediaRepository());
+$usedStorageBytes = $quotaService->getUsedStorageBytes();
+$maxStorageBytes = $quotaService->getMaxTotalStorageBytes();
+$remainingStorageBytes = max(0, $maxStorageBytes - $usedStorageBytes);
+$quotaUsedPercent = $maxStorageBytes > 0 ? min(100, max(0, ($usedStorageBytes / $maxStorageBytes) * 100)) : 0;
+$canUpload = $remainingStorageBytes > 0;
 ?>
 
 <section class="admin-page-header media-manager-header">
@@ -29,12 +36,31 @@ $itemCount        = count($mediaItems);
         <p>Images, video, audio, and documents — filter, reuse paths, and manage rights.</p>
     </div>
     <div class="media-header-actions">
-        <a class="media-header-btn media-header-btn-primary" href="/admin/media/upload">Upload Media</a>
+        <a class="media-header-btn media-header-btn-primary<?= $canUpload ? '' : ' is-disabled' ?>" href="<?= $canUpload ? '/admin/media/upload' : '#' ?>"<?= $canUpload ? '' : ' aria-disabled="true" tabindex="-1"' ?>>Upload Media</a>
         <a class="media-header-btn" href="/admin/media/folders">Manage Folders</a>
     </div>
 </section>
 
 <section class="admin-grid media-manager-page">
+    <article class="media-quota-panel" aria-label="Storage quota">
+        <div class="media-quota-top">
+            <h3>Storage Quota</h3>
+            <span class="media-quota-state <?= $canUpload ? 'is-ok' : 'is-full' ?>"><?= $canUpload ? 'Uploads available' : 'Storage full' ?></span>
+        </div>
+        <div class="media-quota-stats">
+            <p><strong><?= htmlspecialchars($formatSize($usedStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>used</span></p>
+            <p><strong><?= htmlspecialchars($formatSize($remainingStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>remaining</span></p>
+            <p><strong><?= htmlspecialchars($formatSize($maxStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>total</span></p>
+        </div>
+        <div class="media-quota-bar" role="progressbar" aria-label="Storage used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) round($quotaUsedPercent) ?>">
+            <span class="media-quota-fill" style="width: <?= number_format($quotaUsedPercent, 2, '.', '') ?>%"></span>
+        </div>
+        <p class="media-quota-note"><?= number_format($quotaUsedPercent, 1) ?>% of storage quota in use</p>
+        <?php if (!$canUpload): ?>
+            <p class="media-quota-alert">Delete media files to free space before uploading new files.</p>
+        <?php endif; ?>
+    </article>
+
     <form method="get" action="/admin/media" class="media-manager-toolbar" aria-label="Media filters">
         <div class="media-toolbar-row media-toolbar-row-top">
             <label class="media-field media-field-search">
@@ -112,13 +138,13 @@ $itemCount        = count($mediaItems);
                 <p>No files match your current filters. Try clearing the search or resetting the toolbar.</p>
                 <div class="media-empty-actions">
                     <a class="media-header-btn" href="/admin/media">Clear Filters</a>
-                    <a class="media-header-btn media-header-btn-primary" href="/admin/media/upload">Upload Media</a>
+                    <a class="media-header-btn media-header-btn-primary<?= $canUpload ? '' : ' is-disabled' ?>" href="<?= $canUpload ? '/admin/media/upload' : '#' ?>"<?= $canUpload ? '' : ' aria-disabled="true" tabindex="-1"' ?>>Upload Media</a>
                 </div>
             <?php else: ?>
                 <h3>Library is empty</h3>
                 <p>Upload your first file to start reusing assets in pages and collections.</p>
                 <div class="media-empty-actions">
-                    <a class="media-header-btn media-header-btn-primary" href="/admin/media/upload">Upload First File</a>
+                    <a class="media-header-btn media-header-btn-primary<?= $canUpload ? '' : ' is-disabled' ?>" href="<?= $canUpload ? '/admin/media/upload' : '#' ?>"<?= $canUpload ? '' : ' aria-disabled="true" tabindex="-1"' ?>>Upload First File</a>
                 </div>
             <?php endif; ?>
         </article>

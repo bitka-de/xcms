@@ -4,6 +4,7 @@ $usedStorageBytes = $quotaService->getUsedStorageBytes();
 $maxStorageBytes = $quotaService->getMaxTotalStorageBytes();
 $remainingStorageBytes = max(0, $maxStorageBytes - $usedStorageBytes);
 $usedPercent = $maxStorageBytes > 0 ? min(100, max(0, ($usedStorageBytes / $maxStorageBytes) * 100)) : 0;
+$canUpload = $remainingStorageBytes > 0;
 
 $formatBytes = static function (int $bytes): string {
     if ($bytes <= 0) {
@@ -37,19 +38,24 @@ $formatBytes = static function (int $bytes): string {
             <span class="media-upload-quota-fill" style="width: <?= number_format($usedPercent, 2, '.', '') ?>%"></span>
         </div>
         <p class="media-upload-quota-percent"><?= number_format($usedPercent, 1, '.', '') ?>% used</p>
+        <?php if ($canUpload): ?>
+            <p class="media-upload-ability media-upload-ability-ok" role="status">Uploads available</p>
+        <?php else: ?>
+            <p class="media-upload-ability media-upload-ability-full" role="alert">Storage full. Delete files before uploading.</p>
+        <?php endif; ?>
     </aside>
 
-    <form method="post" action="/admin/media/upload" enctype="multipart/form-data" class="stat-card admin-form media-upload-form" data-media-upload-form>
+    <form method="post" action="/admin/media/upload" enctype="multipart/form-data" class="stat-card admin-form media-upload-form" data-media-upload-form data-can-upload="<?= $canUpload ? '1' : '0' ?>">
         <div class="media-upload-grid">
             <label>
                 File *
-                <input type="file" name="file" data-upload-control data-upload-file accept=".jpg,.jpeg,.png,.webp,.gif,.svg,.mp4,.webm,.mov,.mp3,.wav,.ogg,.m4a,.pdf" required>
+                <input type="file" name="file" data-upload-control data-upload-file accept=".jpg,.jpeg,.png,.webp,.gif,.svg,.mp4,.webm,.mov,.mp3,.wav,.ogg,.m4a,.pdf" <?= $canUpload ? '' : 'disabled' ?> required>
                 <?php if (!empty($errors['file'])): ?><small class="field-error"><?= htmlspecialchars((string) $errors['file'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
             </label>
 
             <label>
                 Folder
-                <select name="folder_id" data-upload-control>
+                <select name="folder_id" data-upload-control <?= $canUpload ? '' : 'disabled' ?>>
                     <option value="">Root (no folder)</option>
                     <?php foreach ($folderTree as $folder): ?>
                         <?php $indent = str_repeat('-- ', (int) $folder['depth']); ?>
@@ -63,19 +69,19 @@ $formatBytes = static function (int $bytes): string {
 
             <label>
                 Display Filename (optional)
-                <input type="text" name="filename" data-upload-control value="<?= htmlspecialchars((string) ($form['filename'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" placeholder="example-image.jpg">
+                <input type="text" name="filename" data-upload-control <?= $canUpload ? '' : 'disabled' ?> value="<?= htmlspecialchars((string) ($form['filename'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" placeholder="example-image.jpg">
                 <?php if (!empty($errors['filename'])): ?><small class="field-error"><?= htmlspecialchars((string) $errors['filename'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
             </label>
 
             <label>
                 Title
-                <input type="text" name="title" data-upload-control value="<?= htmlspecialchars((string) ($form['title'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+                <input type="text" name="title" data-upload-control <?= $canUpload ? '' : 'disabled' ?> value="<?= htmlspecialchars((string) ($form['title'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
                 <?php if (!empty($errors['title'])): ?><small class="field-error"><?= htmlspecialchars((string) $errors['title'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
             </label>
 
             <label class="media-upload-span-2">
                 Alt Text
-                <input type="text" name="alt_text" data-upload-control value="<?= htmlspecialchars((string) ($form['alt_text'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+                <input type="text" name="alt_text" data-upload-control <?= $canUpload ? '' : 'disabled' ?> value="<?= htmlspecialchars((string) ($form['alt_text'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
             </label>
         </div>
 
@@ -93,9 +99,13 @@ $formatBytes = static function (int $bytes): string {
         <p class="helper-text">Files are uploaded in 5 MB chunks. Physical file names are always generated server-side and uniquely stored under <code>/public/uploads/media/</code>.</p>
 
         <div class="form-actions">
-            <button type="submit" data-upload-control data-upload-submit>Upload Media</button>
+            <button type="submit" data-upload-control data-upload-submit <?= $canUpload ? '' : 'disabled' ?>>Upload Media</button>
             <a href="/admin/media" data-upload-back-link>Back to media library</a>
         </div>
+
+        <?php if (!$canUpload): ?>
+            <p class="field-error">Storage quota reached. Please delete existing media to free up space.</p>
+        <?php endif; ?>
 
         <noscript>
             <p class="media-upload-noscript">JavaScript is disabled. Standard upload is used without chunked progress.</p>
@@ -121,6 +131,7 @@ $formatBytes = static function (int $bytes): string {
     var progressFill = form.querySelector('[data-upload-progress-fill]');
     var percentEl = form.querySelector('[data-upload-percent]');
     var statusEl = form.querySelector('[data-upload-status]');
+    var canUpload = form.getAttribute('data-can-upload') === '1';
 
     function setControlsDisabled(disabled) {
         controls.forEach(function (el) {
@@ -248,6 +259,12 @@ $formatBytes = static function (int $bytes): string {
     }
 
     form.addEventListener('submit', async function (event) {
+        if (!canUpload) {
+            event.preventDefault();
+            setStatus('Storage quota reached. Delete media before uploading.', 'is-error');
+            return;
+        }
+
         if (!window.FormData || !window.XMLHttpRequest || !fileInput || !fileInput.files || fileInput.files.length === 0) {
             return;
         }
