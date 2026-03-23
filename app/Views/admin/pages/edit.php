@@ -49,6 +49,7 @@
     <section class="stat-card admin-form">
         <h3>Block Management</h3>
         <p>Manage block instances for this page. Blocks are rendered in ascending <code>sort_order</code>.</p>
+        <p class="helper-text">Use media from <a href="/admin/media">Media Library</a> by pasting its public URL into <code>props_json</code>, for example <code>{"image_url":"/uploads/example.webp"}</code>.</p>
 
         <h4>Existing Blocks</h4>
         <?php if (empty($pageBlocks)): ?>

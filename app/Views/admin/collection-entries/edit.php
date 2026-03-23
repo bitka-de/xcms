@@ -5,6 +5,7 @@
 
 <section class="admin-grid">
     <form method="post" action="/admin/collections/<?= (int) $collection->id ?>/entries/<?= (int) $entry->id ?>/edit" class="stat-card admin-form">
+        <p class="helper-text">Media files can be referenced from <a href="/admin/media">Media Library</a> using their public URL inside <code>data_json</code>.</p>
         <label>
             Status
             <?php $status = (string) ($form['status'] ?? 'draft'); ?>

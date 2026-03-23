@@ -8,6 +8,7 @@ class Request
     private string $path;
     private array $query;
     private array $post;
+    private array $files;
     private array $server;
     private array $params = [];
 
@@ -18,6 +19,7 @@ class Request
         $this->path = $this->parsePath();
         $this->query = $_GET;
         $this->post = $_POST;
+        $this->files = $_FILES;
     }
 
     private function parsePath(): string
@@ -68,6 +70,18 @@ class Request
     public function getParam(string $key, mixed $default = null): mixed
     {
         return $this->params[$key] ?? $default;
+    }
+
+    public function getFile(string $key): ?array
+    {
+        $file = $this->files[$key] ?? null;
+
+        return is_array($file) ? $file : null;
+    }
+
+    public function getFiles(): array
+    {
+        return $this->files;
     }
 
     public function setParams(array $params): void

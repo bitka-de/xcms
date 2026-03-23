@@ -41,6 +41,11 @@ return [
     // Admin design settings
     '/admin/design' => ['controller' => 'Admin\DesignAdminController', 'action' => 'edit'],
 
+    // Admin media library
+    '/admin/media' => ['controller' => 'Admin\MediaAdminController', 'action' => 'index'],
+    '/admin/media/upload' => ['controller' => 'Admin\MediaAdminController', 'action' => 'create'],
+    '/admin/media/:id/edit' => ['controller' => 'Admin\MediaAdminController', 'action' => 'edit'],
+
     // Public fallback
     // Any unmatched single-segment public slug, such as /about or /contact,
     // is resolved by Router::setSlugFallback('PageController', 'show') in public/index.php.

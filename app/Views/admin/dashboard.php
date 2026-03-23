@@ -29,6 +29,12 @@
     </article>
 
     <article class="stat-card">
+        <h3>Media</h3>
+        <p class="stat-value"><?= (int) ($stats['media'] ?? 0) ?></p>
+        <a href="/admin/media">Manage media</a>
+    </article>
+
+    <article class="stat-card">
         <h3>Design Settings</h3>
         <p class="stat-value"><?= (int) ($stats['design_settings'] ?? 0) ?></p>
         <a href="/admin/design">Edit design settings</a>
