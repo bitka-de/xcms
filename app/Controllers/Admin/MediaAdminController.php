@@ -190,12 +190,18 @@ class MediaAdminController extends Controller
 
         try {
             $result = $this->chunkUploadService->handleChunkUpload($chunkFile, $payload);
+            $responseFileName = $payload['file_name'] !== ''
+                ? $payload['file_name']
+                : ($payload['original_name'] !== '' ? $payload['original_name'] : null);
 
             if (($result['complete'] ?? false) !== true) {
                 $this->json([
                     'success' => true,
                     'complete' => false,
+                    'stage' => 'chunk',
                     'upload_id' => $result['upload_id'],
+                    'file_name' => $responseFileName,
+                    'file_size' => $incomingTotalSize > 0 ? $incomingTotalSize : null,
                     'received_chunk' => $result['received_chunk'],
                     'next_chunk' => $result['next_chunk'],
                     'total_chunks' => $result['total_chunks'],
@@ -242,9 +248,21 @@ class MediaAdminController extends Controller
 
             $folderId = $this->normalizeFolderId($form['folder_id']);
 
+            // Generate unique filename based on stored_name to avoid UNIQUE constraint violations
+            $baseFilename = pathinfo($upload['stored_name'], PATHINFO_FILENAME);
+            $displayFilename = $baseFilename;
+            $counter = 1;
+            while ($this->mediaRepository->filenameExists($displayFilename, $folderId)) {
+                $displayFilename = $baseFilename . '_' . $counter;
+                $counter++;
+            }
+
+            // Generate default title from original filename (without extension)
+            $defaultTitle = pathinfo($upload['original_name'], PATHINFO_FILENAME);
+
             $media = new Media([
                 'folder_id' => $folderId,
-                'filename' => $upload['filename'],
+                'filename' => $displayFilename,
                 'original_name' => $upload['original_name'],
                 'stored_name' => $upload['stored_name'],
                 'mime_type' => $upload['mime_type'],
@@ -255,15 +273,11 @@ class MediaAdminController extends Controller
                 'size_bytes' => $upload['file_size'],
                 'storage_path' => ltrim($upload['path'], '/'),
                 'public_url' => $upload['path'],
-                'title' => $form['title'] !== '' ? $form['title'] : $upload['default_title'],
-                'alt_text' => $form['alt_text'] !== '' ? $form['alt_text'] : null,
+                'title' => $defaultTitle,
+                'alt_text' => null,
                 'width' => $upload['width'],
                 'height' => $upload['height'],
             ]);
-
-            if ($form['filename'] !== '') {
-                $media->filename = $this->mediaStorageService->normalizeDisplayFilename($form['filename'], $media->extension);
-            }
 
             $id = $this->mediaRepository->save($media);
 
@@ -271,6 +285,9 @@ class MediaAdminController extends Controller
                 'success' => true,
                 'complete' => true,
                 'stage' => 'done',
+                'upload_id' => $payload['upload_id'],
+                'file_name' => $upload['original_name'] ?? $responseFileName,
+                'file_size' => (int) $upload['file_size'],
                 'media_id' => $id,
                 'redirect' => '/admin/media/edit?id=' . $id . '&success=Media+uploaded',
             ]);
@@ -286,14 +303,32 @@ class MediaAdminController extends Controller
             );
             return;
         } catch (\Throwable $exception) {
+            // Log the actual exception for debugging
+            error_log('Chunk upload error: ' . get_class($exception) . ' - ' . $exception->getMessage() . ' at ' . $exception->getFile() . ':' . $exception->getLine());
+            
+            // Extract meaningful details from exception type/message
+            $exceptionType = basename(str_replace('\\', '/', get_class($exception)));
+            $errorMessage = $exception->getMessage();
+            
+            // Determine a more specific error code based on exception type
+            $errorCode = 'unexpected_upload_error';
+            if (strpos($exceptionType, 'Database') !== false || strpos($errorMessage, 'database') !== false) {
+                $errorCode = 'database_error';
+            } elseif (strpos($exceptionType, 'File') !== false || strpos($errorMessage, 'file') !== false) {
+                $errorCode = 'file_operation_failed';
+            } elseif (strpos($errorMessage, 'Read') !== false || strpos($errorMessage, 'Write') !== false) {
+                $errorCode = 'io_error';
+            }
+            
             $this->jsonUploadError(
-                'unexpected_upload_error',
-                'Unexpected upload error.',
+                $errorCode,
+                $errorMessage !== '' ? $errorMessage : 'An unexpected error occurred during upload.',
                 500,
                 'server',
-                false,
+                true,
                 [
                     'upload_id' => $payload['upload_id'] ?? '',
+                    'exception_type' => $exceptionType,
                 ]
             );
             return;
@@ -555,11 +590,6 @@ class MediaAdminController extends Controller
 
         if ($folderId !== null && $this->mediaFolderRepository->find($folderId) === null) {
             $errors['folder_id'] = 'Selected folder does not exist.';
-        }
-
-        $filename = trim((string) ($form['filename'] ?? ''));
-        if ($filename !== '' && !$this->mediaStorageService->isValidDisplayFilename($filename)) {
-            $errors['filename'] = 'Filename contains invalid characters.';
         }
 
         if (!isset($upload['file_size']) || (int) $upload['file_size'] <= 0) {

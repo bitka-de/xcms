@@ -49,6 +49,51 @@ class StorageQuotaService
         ];
     }
 
+    public function getStorageByType(): array
+    {
+        $bytesByType = $this->mediaRepository->getStorageBytesByType();
+        $usedBytes = array_sum($bytesByType);
+        
+        if ($usedBytes <= 0) {
+            return [];
+        }
+
+        $typeLabels = [
+            'image' => 'Images',
+            'video' => 'Videos',
+            'audio' => 'Audio',
+            'document' => 'Documents',
+        ];
+
+        $result = [];
+        foreach ($bytesByType as $type => $bytes) {
+            if ($bytes > 0) {
+                $percent = ($bytes / $usedBytes) * 100;
+                $result[] = [
+                    'type' => $type,
+                    'label' => $typeLabels[$type] ?? ucfirst($type),
+                    'bytes' => $bytes,
+                    'formatted' => $this->formatBytes($bytes),
+                    'percent' => min(100, max(0, $percent)),
+                    'color' => $this->getTypeColor($type),
+                ];
+            }
+        }
+
+        return $result;
+    }
+
+    private function getTypeColor(string $type): string
+    {
+        return match ($type) {
+            'image' => '#4CAF50',
+            'video' => '#2196F3',
+            'audio' => '#FF9800',
+            'document' => '#9C27B0',
+            default => '#757575',
+        };
+    }
+
     public function formatBytes(int $bytes): string
     {
         if ($bytes <= 0) {

@@ -115,6 +115,22 @@ class MediaRepository extends BaseRepository
         return $this->findBy('path', $path);
     }
 
+    public function filenameExists(string $filename, ?int $folderId = null): bool
+    {
+        $query = "SELECT 1 FROM {$this->table} WHERE filename = ? ";
+        $params = [$filename];
+
+        if ($folderId !== null) {
+            $query .= "AND folder_id = ?";
+            $params[] = $folderId;
+        }
+
+        $stmt = $this->db->prepare($query);
+        $stmt->execute($params);
+
+        return $stmt->fetchColumn() !== false;
+    }
+
     public function findByPathWithTags(string $path): ?Media
     {
         $media = $this->findByPath($path);
@@ -139,6 +155,25 @@ class MediaRepository extends BaseRepository
         $stmt = $this->db->query("SELECT COALESCE(SUM(CASE WHEN file_size > 0 THEN file_size ELSE size_bytes END), 0) FROM {$this->table}");
 
         return (int) $stmt->fetchColumn();
+    }
+
+    public function getStorageBytesByType(): array
+    {
+        $stmt = $this->db->query("
+            SELECT 
+                type,
+                COALESCE(SUM(CASE WHEN file_size > 0 THEN file_size ELSE size_bytes END), 0) as bytes
+            FROM {$this->table}
+            GROUP BY type
+            ORDER BY bytes DESC
+        ");
+
+        $result = [];
+        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+            $result[(string) $row['type']] = (int) $row['bytes'];
+        }
+
+        return $result;
     }
 
     public function allForHelper(?int $folderId, int $limit = 50, bool $withTags = false): array

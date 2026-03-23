@@ -28,10 +28,27 @@
         <a href="/admin/collections">Manage collections</a>
     </article>
 
-    <article class="stat-card">
-        <h3>Media</h3>
-        <p class="stat-value"><?= (int) ($stats['media'] ?? 0) ?></p>
-        <a href="/admin/media">Manage media</a>
+    <article class="stat-card stat-card-media">
+        <div class="stat-card-header">
+            <h3>Media</h3>
+            <span class="stat-card-badge"><?= (int) ($stats['media'] ?? 0) ?> files</span>
+        </div>
+        <div class="stat-card-media-content">
+            <div class="stat-card-storage">
+                <div class="stat-card-storage-label">
+                    <span>Storage Used</span>
+                    <span class="stat-card-storage-percent"><?= (int) ($stats['storage_percent'] ?? 0) ?>%</span>
+                </div>
+                <div class="stat-card-storage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) ($stats['storage_percent'] ?? 0) ?>">
+                    <span class="stat-card-storage-fill" style="width: <?= number_format((float) ($stats['storage_percent'] ?? 0), 2, '.', '') ?>%"></span>
+                </div>
+                <div class="stat-card-storage-info">
+                    <span><?= htmlspecialchars((string) ($stats['storage_used'] ?? '0 B'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> used</span>
+                    <span><?= htmlspecialchars((string) ($stats['storage_remaining'] ?? '5 GB'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> free</span>
+                </div>
+            </div>
+        </div>
+        <a href="/admin/media" class="stat-card-action">Manage media</a>
     </article>
 
     <article class="stat-card">

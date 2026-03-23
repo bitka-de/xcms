@@ -9,6 +9,7 @@ use App\Repositories\DesignSettingRepository;
 use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
 use App\Repositories\PageRepository;
+use App\Services\StorageQuotaService;
 
 class DashboardController extends Controller
 {
@@ -21,6 +22,9 @@ class DashboardController extends Controller
         $mediaRepository = new MediaRepository();
         $mediaFolderRepository = new MediaFolderRepository();
 
+        $quotaService = new StorageQuotaService($mediaRepository);
+        $quotaUsage = $quotaService->getUsageSummary();
+
         $stats = [
             'pages' => count($pageRepository->all()),
             'public_pages' => $pageRepository->countPublic(),
@@ -29,6 +33,9 @@ class DashboardController extends Controller
             'media' => count($mediaRepository->all()),
             'media_folders' => count($mediaFolderRepository->all()),
             'design_settings' => count($designSettingRepository->all()),
+            'storage_used' => $quotaUsage['used_formatted'],
+            'storage_remaining' => $quotaUsage['remaining_formatted'],
+            'storage_percent' => (int) round($quotaUsage['used_percent']),
         ];
 
         $this->render('admin/dashboard', [

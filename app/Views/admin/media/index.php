@@ -9,6 +9,7 @@ $itemCount        = count($mediaItems);
 
 $quotaService = new \App\Services\StorageQuotaService(new \App\Repositories\MediaRepository());
 $usage = $quotaService->getUsageSummary();
+$storageByType = $quotaService->getStorageByType();
 $usedStorageBytes = (int) $usage['used_bytes'];
 $maxStorageBytes = (int) $usage['total_bytes'];
 $remainingStorageBytes = (int) $usage['remaining_bytes'];
@@ -42,6 +43,32 @@ $canUpload = $remainingStorageBytes > 0;
             <span class="media-quota-fill" style="width: <?= number_format($quotaUsedPercent, 2, '.', '') ?>%"></span>
         </div>
         <p class="media-quota-note"><?= number_format($quotaUsedPercent, 1) ?>% of storage quota in use</p>
+        
+        <?php if (!empty($storageByType)): ?>
+            <details class="media-quota-breakdown">
+                <summary class="media-quota-breakdown-title">Storage by Type</summary>
+                <div class="media-quota-breakdown-content">
+                    <?php foreach ($storageByType as $item): ?>
+                        <div class="media-quota-type-item">
+                            <div class="media-quota-type-header">
+                                <span class="media-quota-type-label">
+                                    <span class="media-quota-type-dot" style="background-color: <?= htmlspecialchars((string) $item['color'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"></span>
+                                    <?= htmlspecialchars((string) $item['label'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                                </span>
+                                <span class="media-quota-type-stats">
+                                    <strong><?= htmlspecialchars((string) $item['formatted'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong>
+                                    <span><?= number_format($item['percent'], 1) ?>%</span>
+                                </span>
+                            </div>
+                            <div class="media-quota-type-bar">
+                                <span class="media-quota-type-fill" style="width: <?= number_format($item['percent'], 2, '.', '') ?>%; background-color: <?= htmlspecialchars((string) $item['color'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"></span>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </details>
+        <?php endif; ?>
+        
         <?php if (!$canUpload): ?>
             <p class="media-quota-alert">Delete media files to free space before uploading new files.</p>
         <?php endif; ?>
