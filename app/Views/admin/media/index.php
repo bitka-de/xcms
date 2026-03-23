@@ -23,13 +23,14 @@ $canUpload = $remainingStorageBytes > 0;
         <p>Images, video, audio, and documents — filter, reuse paths, and manage rights.</p>
     </div>
     <div class="media-header-actions">
+        <button type="button" class="media-header-btn media-header-storage-toggle" data-toggle-quota title="Toggle storage quota details">ⓘ Storage</button>
         <a class="media-header-btn media-header-btn-primary<?= $canUpload ? '' : ' is-disabled' ?>" href="<?= $canUpload ? '/admin/media/upload' : '#' ?>"<?= $canUpload ? '' : ' aria-disabled="true" tabindex="-1"' ?>>Upload Media</a>
         <a class="media-header-btn" href="/admin/media/folders">Manage Folders</a>
     </div>
 </section>
 
 <section class="admin-grid media-manager-page">
-    <article class="media-quota-panel" aria-label="Storage quota">
+    <article class="media-quota-panel is-hidden" aria-label="Storage quota" data-quota-details>
         <div class="media-quota-top">
             <h3>Storage Quota</h3>
             <span class="media-quota-state <?= $canUpload ? 'is-ok' : 'is-full' ?>"><?= $canUpload ? 'Uploads available' : 'Storage full' ?></span>
@@ -304,6 +305,17 @@ $canUpload = $remainingStorageBytes > 0;
 
 <script>
 (function () {
+    // Storage Quota Toggle
+    var quotaToggleBtn = document.querySelector('[data-toggle-quota]');
+    var quotaDetails = document.querySelector('[data-quota-details]');
+
+    if (quotaToggleBtn && quotaDetails) {
+        quotaToggleBtn.addEventListener('click', function() {
+            quotaDetails.classList.toggle('is-hidden');
+            this.setAttribute('aria-expanded', quotaDetails.classList.contains('is-hidden') ? 'false' : 'true');
+        });
+    }
+
     function formatDuration(s) {
         if (!isFinite(s) || s < 0) { return '–:––'; }
         return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');

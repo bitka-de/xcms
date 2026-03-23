@@ -1426,6 +1426,21 @@ body {
     box-shadow: 0 4px 10px rgba(37,99,235,.3);
 }
 
+.media-header-storage-toggle {
+    background: linear-gradient(135deg, #F5F5FA 0%, #EFEFF5 100%);
+    border-color: #D5D5DD;
+    color: #555;
+    font-weight: 600;
+    padding: 7px 12px;
+}
+
+.media-header-storage-toggle:hover {
+    background: linear-gradient(135deg, #EDEDF2 0%, #E5E5ED 100%);
+    border-color: #C5C5D0;
+    color: #222;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
 .media-manager-page {
     gap: 20px;
 }
@@ -1438,6 +1453,17 @@ body {
     padding: 16px 18px;
     display: grid;
     gap: 12px;
+    max-height: 500px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.media-quota-panel.is-hidden {
+    max-height: 0;
+    padding: 0 18px;
+    border-color: transparent;
+    opacity: 0;
+    visibility: hidden;
 }
 
 .media-quota-top {
