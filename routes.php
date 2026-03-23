@@ -44,6 +44,7 @@ return [
     // Admin media library
     '/admin/media' => ['controller' => 'Admin\MediaAdminController', 'action' => 'index'],
     '/admin/media/upload' => ['controller' => 'Admin\MediaAdminController', 'action' => 'upload'],
+    '/admin/media/upload/chunk' => ['controller' => 'Admin\\MediaAdminController', 'action' => 'uploadChunk'],
     '/admin/media/edit' => ['controller' => 'Admin\MediaAdminController', 'action' => 'edit'],
     '/admin/media/delete' => ['controller' => 'Admin\MediaAdminController', 'action' => 'delete'],
 

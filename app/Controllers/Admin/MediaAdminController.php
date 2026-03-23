@@ -10,7 +10,9 @@ use App\Models\MediaFolder;
 use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
 use App\Repositories\MediaTagRepository;
+use App\Services\ChunkUploadService;
 use App\Services\MediaStorageService;
+use App\Services\StorageQuotaService;
 
 class MediaAdminController extends Controller
 {
@@ -18,6 +20,8 @@ class MediaAdminController extends Controller
     private MediaFolderRepository $mediaFolderRepository;
     private MediaTagRepository $mediaTagRepository;
     private MediaStorageService $mediaStorageService;
+    private ChunkUploadService $chunkUploadService;
+    private StorageQuotaService $storageQuotaService;
 
     public function __construct(Request $request, Response $response)
     {
@@ -26,6 +30,8 @@ class MediaAdminController extends Controller
         $this->mediaFolderRepository = new MediaFolderRepository();
         $this->mediaTagRepository = new MediaTagRepository();
         $this->mediaStorageService = new MediaStorageService();
+        $this->chunkUploadService = new ChunkUploadService($this->mediaStorageService);
+        $this->storageQuotaService = new StorageQuotaService($this->mediaRepository);
     }
 
     public function index(): void
@@ -63,6 +69,11 @@ class MediaAdminController extends Controller
 
             $file = $this->request->getFile('file');
             $errors = $this->validateUploadForm($form, $file);
+
+            $incomingBytes = isset($file['size']) ? (int) $file['size'] : 0;
+            if ($errors === [] && $this->storageQuotaService->wouldExceedQuota($incomingBytes)) {
+                $errors['file'] = 'Storage quota exceeded. Maximum total storage is 5 GB.';
+            }
 
             if ($errors !== []) {
                 $this->render('admin/media/upload', [
@@ -125,6 +136,129 @@ class MediaAdminController extends Controller
             'allowedExtensions' => $this->mediaStorageService->allowedExtensions(),
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
+    }
+
+    public function uploadChunk(): void
+    {
+        if (!$this->request->isPost()) {
+            $this->json([
+                'success' => false,
+                'error' => 'Method not allowed.',
+            ], 405);
+            return;
+        }
+
+        $chunkFile = $this->request->getFile('chunk') ?? $this->request->getFile('file');
+
+        $payload = [
+            'upload_id' => trim((string) $this->request->getPost('upload_id', '')),
+            'chunk_index' => trim((string) $this->request->getPost('chunk_index', '')),
+            'total_chunks' => trim((string) $this->request->getPost('total_chunks', '')),
+            'original_name' => trim((string) $this->request->getPost('original_name', '')),
+            'total_size' => trim((string) $this->request->getPost('total_size', '')),
+        ];
+
+        $form = [
+            'folder_id' => trim((string) $this->request->getPost('folder_id', '')),
+            'filename' => trim((string) $this->request->getPost('filename', '')),
+            'title' => trim((string) $this->request->getPost('title', '')),
+            'alt_text' => trim((string) $this->request->getPost('alt_text', '')),
+        ];
+
+        $incomingTotalSize = ctype_digit($payload['total_size']) ? (int) $payload['total_size'] : 0;
+        if ($incomingTotalSize > 0 && $this->storageQuotaService->wouldExceedQuota($incomingTotalSize)) {
+            $this->json([
+                'success' => false,
+                'error' => 'Storage quota exceeded. Maximum total storage is 5 GB.',
+            ], 422);
+            return;
+        }
+
+        try {
+            $result = $this->chunkUploadService->handleChunkUpload($chunkFile, $payload);
+
+            if (($result['complete'] ?? false) !== true) {
+                $this->json([
+                    'success' => true,
+                    'complete' => false,
+                    'upload_id' => $result['upload_id'],
+                    'received_chunk' => $result['received_chunk'],
+                    'next_chunk' => $result['next_chunk'],
+                    'total_chunks' => $result['total_chunks'],
+                    'chunk_size' => $this->chunkUploadService->getChunkSizeBytes(),
+                ]);
+                return;
+            }
+
+            $upload = $result['upload'];
+            $uploadErrors = $this->validateChunkUploadMetadata($form, $upload);
+
+            if ($uploadErrors !== []) {
+                $this->deleteUploadedPath((string) $upload['path']);
+                $this->json([
+                    'success' => false,
+                    'error' => array_values($uploadErrors)[0],
+                    'errors' => $uploadErrors,
+                ], 422);
+                return;
+            }
+
+            if ($this->storageQuotaService->wouldExceedQuota((int) $upload['file_size'])) {
+                $this->deleteUploadedPath((string) $upload['path']);
+                $this->json([
+                    'success' => false,
+                    'error' => 'Storage quota exceeded. Maximum total storage is 5 GB.',
+                ], 422);
+                return;
+            }
+
+            $folderId = $this->normalizeFolderId($form['folder_id']);
+
+            $media = new Media([
+                'folder_id' => $folderId,
+                'filename' => $upload['filename'],
+                'original_name' => $upload['original_name'],
+                'stored_name' => $upload['stored_name'],
+                'mime_type' => $upload['mime_type'],
+                'extension' => $upload['extension'],
+                'file_size' => $upload['file_size'],
+                'path' => $upload['path'],
+                'type' => $upload['type'],
+                'size_bytes' => $upload['file_size'],
+                'storage_path' => ltrim($upload['path'], '/'),
+                'public_url' => $upload['path'],
+                'title' => $form['title'] !== '' ? $form['title'] : $upload['default_title'],
+                'alt_text' => $form['alt_text'] !== '' ? $form['alt_text'] : null,
+                'width' => $upload['width'],
+                'height' => $upload['height'],
+            ]);
+
+            if ($form['filename'] !== '') {
+                $media->filename = $this->mediaStorageService->normalizeDisplayFilename($form['filename'], $media->extension);
+            }
+
+            $id = $this->mediaRepository->save($media);
+
+            $this->json([
+                'success' => true,
+                'complete' => true,
+                'media_id' => $id,
+                'redirect' => '/admin/media/edit?id=' . $id . '&success=Media+uploaded',
+            ]);
+            return;
+        } catch (\RuntimeException $exception) {
+            $this->json([
+                'success' => false,
+                'error' => $exception->getMessage(),
+            ], 422);
+            return;
+        } catch (\Throwable $exception) {
+            $this->json([
+                'success' => false,
+                'error' => 'Unexpected upload error.',
+            ], 500);
+            return;
+        }
     }
 
     public function edit(): void
@@ -369,6 +503,44 @@ class MediaAdminController extends Controller
 
         $this->mediaFolderRepository->delete($id);
         $this->redirect('/admin/media/folders?success=Folder+deleted');
+    }
+
+    private function validateChunkUploadMetadata(array $form, array $upload): array
+    {
+        $errors = [];
+
+        $folderId = $this->normalizeFolderId((string) ($form['folder_id'] ?? ''));
+        if (($form['folder_id'] ?? '') !== '' && $folderId === null) {
+            $errors['folder_id'] = 'Invalid folder.';
+        }
+
+        if ($folderId !== null && $this->mediaFolderRepository->find($folderId) === null) {
+            $errors['folder_id'] = 'Selected folder does not exist.';
+        }
+
+        $filename = trim((string) ($form['filename'] ?? ''));
+        if ($filename !== '' && !$this->mediaStorageService->isValidDisplayFilename($filename)) {
+            $errors['filename'] = 'Filename contains invalid characters.';
+        }
+
+        if (!isset($upload['file_size']) || (int) $upload['file_size'] <= 0) {
+            $errors['file'] = 'Assembled file is empty.';
+        }
+
+        return $errors;
+    }
+
+    private function deleteUploadedPath(string $publicPath): void
+    {
+        $relativePath = ltrim($publicPath, '/');
+        if ($relativePath === '') {
+            return;
+        }
+
+        $absolutePath = BASE_PATH . '/public/' . $relativePath;
+        if (is_file($absolutePath)) {
+            @unlink($absolutePath);
+        }
     }
 
     private function validateUploadForm(array $form, ?array $file): array

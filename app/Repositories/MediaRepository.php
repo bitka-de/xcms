@@ -134,6 +134,13 @@ class MediaRepository extends BaseRepository
         return (int) $stmt->fetchColumn();
     }
 
+    public function getUsedStorageBytes(): int
+    {
+        $stmt = $this->db->query("SELECT COALESCE(SUM(CASE WHEN file_size > 0 THEN file_size ELSE size_bytes END), 0) FROM {$this->table}");
+
+        return (int) $stmt->fetchColumn();
+    }
+
     public function allForHelper(?int $folderId, int $limit = 50, bool $withTags = false): array
     {
         $limit = max(1, min(200, $limit));
