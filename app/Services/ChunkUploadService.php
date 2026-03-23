@@ -2,6 +2,56 @@
 
 namespace App\Services;
 
+class ChunkUploadException extends \RuntimeException
+{
+    private string $errorCodeName;
+    private string $stage;
+    private int $httpStatus;
+    private bool $retryable;
+    private array $context;
+
+    public function __construct(
+        string $message,
+        string $errorCodeName,
+        string $stage,
+        int $httpStatus = 422,
+        bool $retryable = false,
+        array $context = []
+    ) {
+        parent::__construct($message);
+        $this->errorCodeName = $errorCodeName;
+        $this->stage = $stage;
+        $this->httpStatus = $httpStatus;
+        $this->retryable = $retryable;
+        $this->context = $context;
+    }
+
+    public function getErrorCodeName(): string
+    {
+        return $this->errorCodeName;
+    }
+
+    public function getStage(): string
+    {
+        return $this->stage;
+    }
+
+    public function getHttpStatus(): int
+    {
+        return $this->httpStatus;
+    }
+
+    public function isRetryable(): bool
+    {
+        return $this->retryable;
+    }
+
+    public function getContext(): array
+    {
+        return $this->context;
+    }
+}
+
 class ChunkUploadService
 {
     private const CHUNK_SIZE_BYTES = 5242880; // 5 MB
@@ -31,21 +81,55 @@ class ChunkUploadService
 
         $expectedIndex = $this->countStoredChunks($uploadDir);
         if ((int) $metadata['chunk_index'] !== $expectedIndex) {
-            throw new \RuntimeException('Chunks must be uploaded sequentially.');
+            $this->raise(
+                'chunk_out_of_sequence',
+                'Chunks must be uploaded sequentially.',
+                'chunk',
+                [
+                    'upload_id' => $metadata['upload_id'],
+                    'expected_chunk' => $expectedIndex,
+                    'received_chunk' => (int) $metadata['chunk_index'],
+                    'total_chunks' => (int) $metadata['total_chunks'],
+                ],
+                409,
+                true
+            );
         }
 
         $chunkPath = $this->chunkPath($uploadDir, (int) $metadata['chunk_index']);
         $isLast = (int) $metadata['chunk_index'] === ((int) $metadata['total_chunks'] - 1);
         $chunkBytes = (int) $chunkFile['size'];
         if (!$isLast && $chunkBytes !== self::CHUNK_SIZE_BYTES) {
-            throw new \RuntimeException('Each non-final chunk must be exactly 5 MB.');
+            $this->raise(
+                'invalid_chunk_size',
+                'Each non-final chunk must be exactly 5 MB.',
+                'chunk',
+                [
+                    'upload_id' => $metadata['upload_id'],
+                    'chunk_index' => (int) $metadata['chunk_index'],
+                    'received_size' => $chunkBytes,
+                    'expected_size' => self::CHUNK_SIZE_BYTES,
+                ]
+            );
         }
 
         if (!move_uploaded_file((string) $chunkFile['tmp_name'], $chunkPath)) {
-            throw new \RuntimeException('Failed to persist chunk on server.');
+            $this->raise(
+                'chunk_store_failed',
+                'Failed to persist chunk on server.',
+                'chunk',
+                [
+                    'upload_id' => $metadata['upload_id'],
+                    'chunk_index' => (int) $metadata['chunk_index'],
+                ],
+                500,
+                true
+            );
         }
 
         if (!$isLast) {
+            // Intentionally keep chunk files for interrupted uploads.
+            // Chunks are isolated per upload_id directory and can be cleaned later by a maintenance job.
             return [
                 'complete' => false,
                 'upload_id' => $metadata['upload_id'],
@@ -55,16 +139,56 @@ class ChunkUploadService
             ];
         }
 
-        $assembledPath = $this->assembleChunks($uploadDir, (int) $metadata['total_chunks']);
-        $assembledSize = (int) filesize($assembledPath);
+        try {
+            $assembledPath = $this->assembleChunks($uploadDir, (int) $metadata['total_chunks'], (string) $metadata['upload_id']);
+            $assembledSize = (int) filesize($assembledPath);
 
-        if ($manifest['total_size'] !== null && $assembledSize !== (int) $manifest['total_size']) {
-            @unlink($assembledPath);
-            throw new \RuntimeException('Assembled file size does not match expected size.');
+            if ($manifest['total_size'] !== null && $assembledSize !== (int) $manifest['total_size']) {
+                @unlink($assembledPath);
+                $this->raise(
+                    'assembly_size_mismatch',
+                    'Assembled file size does not match expected size.',
+                    'assembly',
+                    [
+                        'upload_id' => $metadata['upload_id'],
+                        'expected_size' => (int) $manifest['total_size'],
+                        'assembled_size' => $assembledSize,
+                    ]
+                );
+            }
+
+            $upload = $this->storeAsMediaFile($assembledPath, (string) $manifest['original_name']);
+            $this->deleteDirectory($uploadDir);
+        } catch (ChunkUploadException $exception) {
+            $cleanupSuccess = $this->cleanupAfterFinalizationFailure($uploadDir);
+            $context = $exception->getContext();
+            $context['cleanup_attempted'] = true;
+            $context['cleanup_success'] = $cleanupSuccess;
+
+            throw new ChunkUploadException(
+                $exception->getMessage(),
+                $exception->getErrorCodeName(),
+                $exception->getStage(),
+                $exception->getHttpStatus(),
+                $exception->isRetryable(),
+                $context
+            );
+        } catch (\Throwable $exception) {
+            $cleanupSuccess = $this->cleanupAfterFinalizationFailure($uploadDir);
+
+            throw new ChunkUploadException(
+                'Final assembly failed. Please retry the upload.',
+                'finalization_failed',
+                'assembly',
+                500,
+                false,
+                [
+                    'upload_id' => $metadata['upload_id'],
+                    'cleanup_attempted' => true,
+                    'cleanup_success' => $cleanupSuccess,
+                ]
+            );
         }
-
-        $upload = $this->storeAsMediaFile($assembledPath, (string) $manifest['original_name']);
-        $this->deleteDirectory($uploadDir);
 
         return [
             'complete' => true,
@@ -78,58 +202,58 @@ class ChunkUploadService
         $uploadId = trim((string) ($payload['upload_id'] ?? ''));
         $chunkIndexRaw = trim((string) ($payload['chunk_index'] ?? ''));
         $totalChunksRaw = trim((string) ($payload['total_chunks'] ?? ''));
-        $originalName = trim((string) ($payload['original_name'] ?? ''));
-        $totalSizeRaw = trim((string) ($payload['total_size'] ?? ''));
+        $originalName = trim((string) (($payload['original_name'] ?? '') !== '' ? $payload['original_name'] : ($payload['file_name'] ?? '')));
+        $totalSizeRaw = trim((string) (($payload['total_size'] ?? '') !== '' ? $payload['total_size'] : ($payload['file_size'] ?? '')));
 
         if (!preg_match('/^[a-zA-Z0-9_-]{8,128}$/', $uploadId)) {
-            throw new \RuntimeException('Invalid upload id.');
+            $this->raise('invalid_upload_id', 'Invalid upload id.', 'metadata');
         }
 
         if ($chunkIndexRaw === '' || !ctype_digit($chunkIndexRaw)) {
-            throw new \RuntimeException('Invalid chunk index.');
+            $this->raise('invalid_chunk_index', 'Invalid chunk index.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         if ($totalChunksRaw === '' || !ctype_digit($totalChunksRaw)) {
-            throw new \RuntimeException('Invalid total chunks.');
+            $this->raise('invalid_total_chunks', 'Invalid total chunks.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         $chunkIndex = (int) $chunkIndexRaw;
         $totalChunks = (int) $totalChunksRaw;
 
         if ($chunkIndex < 0) {
-            throw new \RuntimeException('Chunk index must be >= 0.');
+            $this->raise('invalid_chunk_index', 'Chunk index must be >= 0.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         if ($totalChunks < 1) {
-            throw new \RuntimeException('Total chunks must be >= 1.');
+            $this->raise('invalid_total_chunks', 'Total chunks must be >= 1.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         if ($chunkIndex >= $totalChunks) {
-            throw new \RuntimeException('Chunk index out of range.');
+            $this->raise('chunk_index_out_of_range', 'Chunk index out of range.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         if ($originalName === '') {
-            throw new \RuntimeException('Original filename is required.');
+            $this->raise('missing_file_name', 'Original filename is required.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         $extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
         if ($extension === '') {
-            throw new \RuntimeException('File extension is required.');
+            $this->raise('missing_extension', 'File extension is required.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         if (!in_array($extension, $this->mediaStorageService->allowedExtensions(), true)) {
-            throw new \RuntimeException('File extension is not allowed.');
+            $this->raise('extension_not_allowed', 'File extension is not allowed.', 'metadata', ['upload_id' => $uploadId]);
         }
 
         $totalSize = null;
         if ($totalSizeRaw !== '') {
             if (!ctype_digit($totalSizeRaw)) {
-                throw new \RuntimeException('Invalid total size.');
+                $this->raise('invalid_file_size', 'Invalid total size.', 'metadata', ['upload_id' => $uploadId]);
             }
 
             $parsed = (int) $totalSizeRaw;
             if ($parsed <= 0) {
-                throw new \RuntimeException('Total size must be greater than zero.');
+                $this->raise('invalid_file_size', 'Total size must be greater than zero.', 'metadata', ['upload_id' => $uploadId]);
             }
 
             $totalSize = $parsed;
@@ -148,24 +272,29 @@ class ChunkUploadService
     private function validateChunkFile(?array $chunkFile): void
     {
         if ($chunkFile === null || ($chunkFile['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-            throw new \RuntimeException('Chunk payload is required.');
+            $this->raise('missing_chunk_payload', 'Chunk payload is required.', 'chunk');
         }
 
         if (($chunkFile['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
-            throw new \RuntimeException('Chunk upload failed.');
+            $this->raise('chunk_upload_failed', 'Chunk upload failed.', 'chunk', [
+                'php_upload_error' => (int) ($chunkFile['error'] ?? UPLOAD_ERR_OK),
+            ]);
         }
 
         if (!isset($chunkFile['tmp_name'], $chunkFile['size']) || !is_uploaded_file((string) $chunkFile['tmp_name'])) {
-            throw new \RuntimeException('Invalid uploaded chunk.');
+            $this->raise('invalid_chunk_payload', 'Invalid uploaded chunk.', 'chunk');
         }
 
         $size = (int) $chunkFile['size'];
         if ($size <= 0) {
-            throw new \RuntimeException('Chunk cannot be empty.');
+            $this->raise('empty_chunk', 'Chunk cannot be empty.', 'chunk');
         }
 
         if ($size > self::CHUNK_SIZE_BYTES) {
-            throw new \RuntimeException('Chunk exceeds 5 MB limit.');
+            $this->raise('chunk_too_large', 'Chunk exceeds 5 MB limit.', 'chunk', [
+                'chunk_size' => $size,
+                'max_chunk_size' => self::CHUNK_SIZE_BYTES,
+            ]);
         }
     }
 
@@ -178,15 +307,19 @@ class ChunkUploadService
             $manifest = json_decode($raw, true);
 
             if (!is_array($manifest)) {
-                throw new \RuntimeException('Upload metadata is corrupted.');
+                $this->raise('manifest_corrupted', 'Upload metadata is corrupted.', 'metadata');
             }
 
             if ((string) ($manifest['original_name'] ?? '') !== (string) $metadata['original_name']) {
-                throw new \RuntimeException('Original filename does not match initial chunk.');
+                $this->raise('manifest_mismatch_name', 'Original filename does not match initial chunk.', 'metadata', [
+                    'upload_id' => $metadata['upload_id'],
+                ]);
             }
 
             if ((int) ($manifest['total_chunks'] ?? 0) !== (int) $metadata['total_chunks']) {
-                throw new \RuntimeException('Total chunk count does not match initial chunk.');
+                $this->raise('manifest_mismatch_total_chunks', 'Total chunk count does not match initial chunk.', 'metadata', [
+                    'upload_id' => $metadata['upload_id'],
+                ]);
             }
 
             return [
@@ -212,32 +345,43 @@ class ChunkUploadService
         ];
     }
 
-    private function assembleChunks(string $uploadDir, int $totalChunks): string
+    private function assembleChunks(string $uploadDir, int $totalChunks, string $uploadId): string
     {
         $assembledPath = $uploadDir . '/assembled.bin';
         $out = fopen($assembledPath, 'wb');
 
         if ($out === false) {
-            throw new \RuntimeException('Cannot create assembled file.');
+            $this->raise('assembly_create_failed', 'Cannot create assembled file.', 'assembly', [
+                'upload_id' => $uploadId,
+            ], 500);
         }
 
         try {
             for ($i = 0; $i < $totalChunks; $i++) {
                 $chunkPath = $this->chunkPath($uploadDir, $i);
                 if (!is_file($chunkPath)) {
-                    throw new \RuntimeException('Missing chunk during assembly.');
+                    $this->raise('assembly_missing_chunk', 'Missing chunk during assembly.', 'assembly', [
+                        'upload_id' => $uploadId,
+                        'missing_chunk' => $i,
+                    ]);
                 }
 
                 $in = fopen($chunkPath, 'rb');
                 if ($in === false) {
-                    throw new \RuntimeException('Cannot read chunk during assembly.');
+                    $this->raise('assembly_chunk_read_failed', 'Cannot read chunk during assembly.', 'assembly', [
+                        'upload_id' => $uploadId,
+                        'chunk_index' => $i,
+                    ], 500);
                 }
 
                 while (!feof($in)) {
                     $buffer = fread($in, 1048576);
                     if ($buffer === false) {
                         fclose($in);
-                        throw new \RuntimeException('Error while reading chunk data.');
+                        $this->raise('assembly_chunk_read_failed', 'Error while reading chunk data.', 'assembly', [
+                            'upload_id' => $uploadId,
+                            'chunk_index' => $i,
+                        ], 500);
                     }
 
                     if ($buffer === '') {
@@ -246,7 +390,10 @@ class ChunkUploadService
 
                     if (fwrite($out, $buffer) === false) {
                         fclose($in);
-                        throw new \RuntimeException('Error while writing assembled file.');
+                        $this->raise('assembly_write_failed', 'Error while writing assembled file.', 'assembly', [
+                            'upload_id' => $uploadId,
+                            'chunk_index' => $i,
+                        ], 500);
                     }
                 }
 
@@ -274,7 +421,8 @@ class ChunkUploadService
 
         if (!rename($assembledPath, $absolutePath)) {
             if (!copy($assembledPath, $absolutePath)) {
-                throw new \RuntimeException('Failed to store assembled file.');
+                @unlink($absolutePath);
+                $this->raise('store_final_file_failed', 'Failed to store assembled file.', 'assembly', [], 500);
             }
             @unlink($assembledPath);
         }
@@ -355,6 +503,28 @@ class ChunkUploadService
         }
 
         @rmdir($directory);
+    }
+
+    private function cleanupAfterFinalizationFailure(string $uploadDir): bool
+    {
+        if (!is_dir($uploadDir)) {
+            return true;
+        }
+
+        $this->deleteDirectory($uploadDir);
+
+        return !is_dir($uploadDir);
+    }
+
+    private function raise(
+        string $errorCode,
+        string $message,
+        string $stage,
+        array $context = [],
+        int $httpStatus = 422,
+        bool $retryable = false
+    ): void {
+        throw new ChunkUploadException($message, $errorCode, $stage, $httpStatus, $retryable, $context);
     }
 
     private function slugify(string $value): string

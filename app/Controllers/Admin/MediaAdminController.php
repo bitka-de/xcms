@@ -10,6 +10,7 @@ use App\Models\MediaFolder;
 use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
 use App\Repositories\MediaTagRepository;
+use App\Services\ChunkUploadException;
 use App\Services\ChunkUploadService;
 use App\Services\MediaStorageService;
 use App\Services\StorageQuotaService;
@@ -141,10 +142,12 @@ class MediaAdminController extends Controller
     public function uploadChunk(): void
     {
         if (!$this->request->isPost()) {
-            $this->json([
-                'success' => false,
-                'error' => 'Method not allowed.',
-            ], 405);
+            $this->jsonUploadError(
+                'method_not_allowed',
+                'Method not allowed.',
+                405,
+                'request'
+            );
             return;
         }
 
@@ -154,6 +157,8 @@ class MediaAdminController extends Controller
             'upload_id' => trim((string) $this->request->getPost('upload_id', '')),
             'chunk_index' => trim((string) $this->request->getPost('chunk_index', '')),
             'total_chunks' => trim((string) $this->request->getPost('total_chunks', '')),
+            'file_name' => trim((string) $this->request->getPost('file_name', '')),
+            'file_size' => trim((string) $this->request->getPost('file_size', '')),
             'original_name' => trim((string) $this->request->getPost('original_name', '')),
             'total_size' => trim((string) $this->request->getPost('total_size', '')),
         ];
@@ -165,12 +170,21 @@ class MediaAdminController extends Controller
             'alt_text' => trim((string) $this->request->getPost('alt_text', '')),
         ];
 
-        $incomingTotalSize = ctype_digit($payload['total_size']) ? (int) $payload['total_size'] : 0;
+        $incomingSizeRaw = $payload['total_size'] !== '' ? $payload['total_size'] : $payload['file_size'];
+        $incomingTotalSize = ctype_digit($incomingSizeRaw) ? (int) $incomingSizeRaw : 0;
         if ($incomingTotalSize > 0 && $this->storageQuotaService->wouldExceedQuota($incomingTotalSize)) {
-            $this->json([
-                'success' => false,
-                'error' => 'Storage quota exceeded. Maximum total storage is 5 GB.',
-            ], 422);
+            $this->jsonUploadError(
+                'quota_exceeded',
+                'Storage quota exceeded. Maximum total storage is 5 GB.',
+                422,
+                'quota',
+                false,
+                [
+                    'upload_id' => $payload['upload_id'],
+                    'incoming_size' => $incomingTotalSize,
+                    'remaining_storage' => $this->storageQuotaService->getRemainingStorageBytes(),
+                ]
+            );
             return;
         }
 
@@ -195,20 +209,34 @@ class MediaAdminController extends Controller
 
             if ($uploadErrors !== []) {
                 $this->deleteUploadedPath((string) $upload['path']);
-                $this->json([
-                    'success' => false,
-                    'error' => array_values($uploadErrors)[0],
-                    'errors' => $uploadErrors,
-                ], 422);
+                $this->jsonUploadError(
+                    'metadata_validation_failed',
+                    array_values($uploadErrors)[0],
+                    422,
+                    'metadata',
+                    false,
+                    [
+                        'upload_id' => $payload['upload_id'],
+                        'errors' => $uploadErrors,
+                    ]
+                );
                 return;
             }
 
             if ($this->storageQuotaService->wouldExceedQuota((int) $upload['file_size'])) {
                 $this->deleteUploadedPath((string) $upload['path']);
-                $this->json([
-                    'success' => false,
-                    'error' => 'Storage quota exceeded. Maximum total storage is 5 GB.',
-                ], 422);
+                $this->jsonUploadError(
+                    'quota_exceeded',
+                    'Storage quota exceeded. Maximum total storage is 5 GB.',
+                    422,
+                    'quota',
+                    false,
+                    [
+                        'upload_id' => $payload['upload_id'],
+                        'incoming_size' => (int) $upload['file_size'],
+                        'remaining_storage' => $this->storageQuotaService->getRemainingStorageBytes(),
+                    ]
+                );
                 return;
             }
 
@@ -242,21 +270,32 @@ class MediaAdminController extends Controller
             $this->json([
                 'success' => true,
                 'complete' => true,
+                'stage' => 'done',
                 'media_id' => $id,
                 'redirect' => '/admin/media/edit?id=' . $id . '&success=Media+uploaded',
             ]);
             return;
-        } catch (\RuntimeException $exception) {
-            $this->json([
-                'success' => false,
-                'error' => $exception->getMessage(),
-            ], 422);
+        } catch (ChunkUploadException $exception) {
+            $this->jsonUploadError(
+                $exception->getErrorCodeName(),
+                $exception->getMessage(),
+                $exception->getHttpStatus(),
+                $exception->getStage(),
+                $exception->isRetryable(),
+                $exception->getContext()
+            );
             return;
         } catch (\Throwable $exception) {
-            $this->json([
-                'success' => false,
-                'error' => 'Unexpected upload error.',
-            ], 500);
+            $this->jsonUploadError(
+                'unexpected_upload_error',
+                'Unexpected upload error.',
+                500,
+                'server',
+                false,
+                [
+                    'upload_id' => $payload['upload_id'] ?? '',
+                ]
+            );
             return;
         }
     }
@@ -541,6 +580,30 @@ class MediaAdminController extends Controller
         if (is_file($absolutePath)) {
             @unlink($absolutePath);
         }
+    }
+
+    private function jsonUploadError(
+        string $code,
+        string $message,
+        int $status,
+        string $stage,
+        bool $retryable = false,
+        array $context = []
+    ): void {
+        $response = [
+            'success' => false,
+            'complete' => false,
+            'error' => $message,
+            'error_code' => $code,
+            'stage' => $stage,
+            'retryable' => $retryable,
+        ];
+
+        if ($context !== []) {
+            $response['context'] = $context;
+        }
+
+        $this->json($response, $status);
     }
 
     private function validateUploadForm(array $form, ?array $file): array
