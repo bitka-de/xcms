@@ -6,6 +6,8 @@ use App\Core\Controller;
 use App\Models\Page;
 use App\Models\PageBlock;
 use App\Repositories\BlockTypeRepository;
+use App\Repositories\MediaFolderRepository;
+use App\Repositories\MediaRepository;
 use App\Repositories\PageBlockRepository;
 use App\Repositories\PageRepository;
 
@@ -14,6 +16,8 @@ class PageAdminController extends Controller
     private PageRepository $pageRepository;
     private PageBlockRepository $pageBlockRepository;
     private BlockTypeRepository $blockTypeRepository;
+    private MediaRepository $mediaRepository;
+    private MediaFolderRepository $mediaFolderRepository;
 
     public function __construct(\App\Core\Request $request, \App\Core\Response $response)
     {
@@ -21,6 +25,8 @@ class PageAdminController extends Controller
         $this->pageRepository = new PageRepository();
         $this->pageBlockRepository = new PageBlockRepository();
         $this->blockTypeRepository = new BlockTypeRepository();
+        $this->mediaRepository = new MediaRepository();
+        $this->mediaFolderRepository = new MediaFolderRepository();
     }
 
     public function index(): void
@@ -351,6 +357,10 @@ class PageAdminController extends Controller
             $blockTypeMap[(int) $blockType->id] = $blockType;
         }
 
+        $selectedMediaFolderId = $this->resolveMediaFolderIdFromQuery();
+        $mediaFolders = $this->mediaFolderRepository->getTreeList();
+        $mediaItems = $this->mediaRepository->allForHelper($selectedMediaFolderId, 100);
+
         $this->render('admin/pages/edit', [
             'pageTitle' => 'Edit Page',
             'page' => $page,
@@ -361,6 +371,9 @@ class PageAdminController extends Controller
             'blockTypes' => $blockTypes,
             'blockTypeMap' => $blockTypeMap,
             'blockErrors' => $blockErrors,
+            'mediaFolders' => $mediaFolders,
+            'mediaItems' => $mediaItems,
+            'selectedMediaFolderId' => $selectedMediaFolderId,
             'newBlockForm' => $newBlockForm !== [] ? $newBlockForm : [
                 'block_type_id' => '',
                 'sort_order' => (string) ($this->pageBlockRepository->getMaxSortOrderForPage((int) $page->id) + 1),
@@ -394,5 +407,20 @@ class PageAdminController extends Controller
         }
 
         return null;
+    }
+
+    private function resolveMediaFolderIdFromQuery(): ?int
+    {
+        $raw = trim((string) $this->request->getQuery('media_folder_id', ''));
+        if ($raw === '' || !ctype_digit($raw)) {
+            return null;
+        }
+
+        $id = (int) $raw;
+        if ($id <= 0 || $this->mediaFolderRepository->find($id) === null) {
+            return null;
+        }
+
+        return $id;
     }
 }

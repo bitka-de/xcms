@@ -49,7 +49,49 @@
     <section class="stat-card admin-form">
         <h3>Block Management</h3>
         <p>Manage block instances for this page. Blocks are rendered in ascending <code>sort_order</code>.</p>
-        <p class="helper-text">Use media from <a href="/admin/media">Media Library</a> by pasting its public URL into <code>props_json</code>, for example <code>{"image_url":"/uploads/example.webp"}</code>.</p>
+
+        <div class="media-helper">
+            <h4>Media Helper</h4>
+            <form method="get" action="/admin/pages/<?= (int) $page->id ?>/edit" class="admin-form media-helper-form">
+                <label>
+                    Filter media by folder
+                    <select name="media_folder_id" onchange="this.form.submit()">
+                        <option value="">All folders</option>
+                        <?php foreach (($mediaFolders ?? []) as $folder): ?>
+                            <?php $indent = str_repeat('-- ', (int) $folder['depth']); ?>
+                            <option value="<?= (int) $folder['id'] ?>" <?= (int) ($selectedMediaFolderId ?? 0) === (int) $folder['id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($indent . $folder['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+            </form>
+
+            <?php if (!empty($mediaItems)): ?>
+                <table class="admin-table">
+                    <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Type</th>
+                        <th>Path</th>
+                        <th>JSON Snippet</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($mediaItems as $media): ?>
+                        <tr>
+                            <td><?= htmlspecialchars((string) $media->filename, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                            <td><?= htmlspecialchars((string) $media->type, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                            <td><input class="media-url" readonly value="<?= htmlspecialchars((string) $media->path, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" onclick="this.select();"></td>
+                            <td><input class="media-url" readonly value="<?= htmlspecialchars((string) ('{"media":{"path":"' . $media->path . '","filename":"' . $media->filename . '","type":"' . $media->type . '"}}'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" onclick="this.select();"></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php else: ?>
+                <p class="helper-text">No media items found for the selected folder.</p>
+            <?php endif; ?>
+        </div>
 
         <h4>Existing Blocks</h4>
         <?php if (empty($pageBlocks)): ?>

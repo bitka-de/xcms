@@ -6,70 +6,63 @@ use App\Core\Controller;
 use App\Core\Request;
 use App\Core\Response;
 use App\Models\Media;
+use App\Models\MediaFolder;
+use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
+use App\Services\MediaStorageService;
 
 class MediaAdminController extends Controller
 {
-    private const MAX_FILE_SIZE = 10485760;
-
-    private const ALLOWED_EXTENSIONS = [
-        'jpg',
-        'jpeg',
-        'png',
-        'webp',
-        'gif',
-        'pdf',
-    ];
-
-    private const ALLOWED_MIME_TYPES = [
-        'jpg' => ['image/jpeg'],
-        'jpeg' => ['image/jpeg'],
-        'png' => ['image/png'],
-        'webp' => ['image/webp'],
-        'gif' => ['image/gif'],
-        'pdf' => ['application/pdf'],
-    ];
-
     private MediaRepository $mediaRepository;
+    private MediaFolderRepository $mediaFolderRepository;
+    private MediaStorageService $mediaStorageService;
 
     public function __construct(Request $request, Response $response)
     {
         parent::__construct($request, $response);
         $this->mediaRepository = new MediaRepository();
+        $this->mediaFolderRepository = new MediaFolderRepository();
+        $this->mediaStorageService = new MediaStorageService();
     }
 
     public function index(): void
     {
-        if ($this->request->isPost()) {
-            $this->handleDelete();
-            return;
-        }
+        $folderId = $this->resolveFolderIdFromQuery();
+        $mediaItems = $this->mediaRepository->allByFolder($folderId);
+        $folderTree = $this->mediaFolderRepository->getTreeList();
+        $folderMap = $this->mediaFolderRepository->getIdNameMap();
 
         $this->render('admin/media/index', [
             'pageTitle' => 'Media Library',
-            'mediaItems' => $this->mediaRepository->all(),
+            'mediaItems' => $mediaItems,
+            'folderTree' => $folderTree,
+            'folderMap' => $folderMap,
+            'selectedFolderId' => $folderId,
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
     }
 
-    public function create(): void
+    public function upload(): void
     {
         if ($this->request->isPost()) {
             $form = [
+                'folder_id' => trim((string) $this->request->getPost('folder_id', '')),
+                'filename' => trim((string) $this->request->getPost('filename', '')),
                 'title' => trim((string) $this->request->getPost('title', '')),
                 'alt_text' => trim((string) $this->request->getPost('alt_text', '')),
             ];
 
             $file = $this->request->getFile('file');
-            $errors = $this->validateUpload($form, $file);
+            $errors = $this->validateUploadForm($form, $file);
 
             if ($errors !== []) {
-                $this->render('admin/media/create', [
+                $this->render('admin/media/upload', [
                     'pageTitle' => 'Upload Media',
                     'form' => $form,
+                    'folderTree' => $this->mediaFolderRepository->getTreeList(),
                     'errors' => $errors,
-                    'maxFileSizeMb' => (int) (self::MAX_FILE_SIZE / 1024 / 1024),
-                    'allowedExtensions' => self::ALLOWED_EXTENSIONS,
+                    'maxFileSizeMb' => $this->mediaStorageService->maxFileSizeMb(),
+                    'allowedExtensions' => $this->mediaStorageService->allowedExtensions(),
                     'flash' => [
                         'type' => 'error',
                         'message' => 'Please fix the upload errors.',
@@ -78,43 +71,56 @@ class MediaAdminController extends Controller
                 return;
             }
 
-            $upload = $this->storeUploadedFile($file, $form);
+            $upload = $this->mediaStorageService->saveUploadedFile($file);
+            $folderId = $this->normalizeFolderId($form['folder_id']);
 
             $media = new Media([
-                'title' => $form['title'] !== '' ? $form['title'] : $upload['default_title'],
-                'alt_text' => $form['alt_text'] !== '' ? $form['alt_text'] : null,
-                'original_name' => $upload['original_name'],
+                'folder_id' => $folderId,
                 'filename' => $upload['filename'],
+                'original_name' => $upload['original_name'],
+                'stored_name' => $upload['stored_name'],
                 'mime_type' => $upload['mime_type'],
                 'extension' => $upload['extension'],
-                'size_bytes' => $upload['size_bytes'],
-                'storage_path' => $upload['storage_path'],
-                'public_url' => $upload['public_url'],
+                'file_size' => $upload['file_size'],
+                'path' => $upload['path'],
+                'type' => $upload['type'],
+                'size_bytes' => $upload['file_size'],
+                'storage_path' => ltrim($upload['path'], '/'),
+                'public_url' => $upload['path'],
+                'title' => $form['title'] !== '' ? $form['title'] : $upload['default_title'],
+                'alt_text' => $form['alt_text'] !== '' ? $form['alt_text'] : null,
                 'width' => $upload['width'],
                 'height' => $upload['height'],
             ]);
 
+            if ($form['filename'] !== '') {
+                $media->filename = $this->mediaStorageService->normalizeDisplayFilename($form['filename'], $media->extension);
+            }
+
             $id = $this->mediaRepository->save($media);
-            $this->redirect('/admin/media/' . $id . '/edit?success=Media+uploaded');
+            $this->redirect('/admin/media/edit?id=' . $id . '&success=Media+uploaded');
             return;
         }
 
-        $this->render('admin/media/create', [
+        $this->render('admin/media/upload', [
             'pageTitle' => 'Upload Media',
             'form' => [
+                'folder_id' => '',
+                'filename' => '',
                 'title' => '',
                 'alt_text' => '',
             ],
+            'folderTree' => $this->mediaFolderRepository->getTreeList(),
             'errors' => [],
-            'maxFileSizeMb' => (int) (self::MAX_FILE_SIZE / 1024 / 1024),
-            'allowedExtensions' => self::ALLOWED_EXTENSIONS,
+            'maxFileSizeMb' => $this->mediaStorageService->maxFileSizeMb(),
+            'allowedExtensions' => $this->mediaStorageService->allowedExtensions(),
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
     }
 
     public function edit(): void
     {
-        $id = (int) $this->request->getParam('id', 0);
+        $id = (int) $this->request->getQuery('id', $this->request->getParam('id', 0));
         $media = $this->mediaRepository->find($id);
 
         if ($media === null) {
@@ -124,20 +130,22 @@ class MediaAdminController extends Controller
 
         if ($this->request->isPost()) {
             $form = [
+                'id' => (string) $id,
+                'folder_id' => trim((string) $this->request->getPost('folder_id', '')),
+                'filename' => trim((string) $this->request->getPost('filename', '')),
                 'title' => trim((string) $this->request->getPost('title', '')),
                 'alt_text' => trim((string) $this->request->getPost('alt_text', '')),
+                'rename_physical' => (string) $this->request->getPost('rename_physical', '') === '1',
             ];
 
-            $errors = [];
-            if ($form['title'] === '') {
-                $errors['title'] = 'Title is required.';
-            }
+            $errors = $this->validateEditForm($form, $media);
 
             if ($errors !== []) {
                 $this->render('admin/media/edit', [
                     'pageTitle' => 'Edit Media',
                     'media' => $media,
                     'form' => $form,
+                    'folderTree' => $this->mediaFolderRepository->getTreeList(),
                     'errors' => $errors,
                     'flash' => [
                         'type' => 'error',
@@ -147,11 +155,24 @@ class MediaAdminController extends Controller
                 return;
             }
 
+            $media->folder_id = $this->normalizeFolderId($form['folder_id']);
+            $media->filename = $this->mediaStorageService->normalizeDisplayFilename($form['filename'], $media->extension);
             $media->title = $form['title'];
             $media->alt_text = $form['alt_text'] !== '' ? $form['alt_text'] : null;
+
+            // Keep references stable by default: display filename can change without physical rename.
+            // Physical rename is opt-in and generates a safe unique server-side name.
+            if ($form['rename_physical']) {
+                $rename = $this->mediaStorageService->renamePhysicalFile($media, $media->filename);
+                $media->stored_name = $rename['stored_name'];
+                $media->path = $rename['path'];
+                $media->storage_path = ltrim($rename['path'], '/');
+                $media->public_url = $rename['path'];
+            }
+
             $this->mediaRepository->save($media);
 
-            $this->redirect('/admin/media/' . $media->id . '/edit?success=Media+updated');
+            $this->redirect('/admin/media/edit?id=' . $media->id . '&success=Media+updated');
             return;
         }
 
@@ -159,16 +180,26 @@ class MediaAdminController extends Controller
             'pageTitle' => 'Edit Media',
             'media' => $media,
             'form' => [
+                'id' => (string) $media->id,
+                'folder_id' => $media->folder_id !== null ? (string) $media->folder_id : '',
+                'filename' => $media->filename,
                 'title' => $media->title,
                 'alt_text' => $media->alt_text ?? '',
+                'rename_physical' => false,
             ],
+            'folderTree' => $this->mediaFolderRepository->getTreeList(),
             'errors' => [],
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
     }
 
-    private function handleDelete(): void
+    public function delete(): void
     {
+        if (!$this->request->isPost()) {
+            $this->redirect('/admin/media');
+            return;
+        }
+
         $action = (string) $this->request->getPost('_action', '');
         if ($action !== 'delete') {
             $this->redirect('/admin/media');
@@ -183,146 +214,213 @@ class MediaAdminController extends Controller
             return;
         }
 
-        $absolutePath = BASE_PATH . '/public/' . ltrim($media->storage_path, '/');
-        if (is_file($absolutePath)) {
-            @unlink($absolutePath);
-        }
+        $this->mediaStorageService->deletePhysicalFile($media);
 
         $this->mediaRepository->delete($id);
         $this->redirect('/admin/media?success=Media+deleted');
     }
 
-    private function validateUpload(array $form, ?array $file): array
+    public function folders(): void
     {
-        $errors = [];
+        $this->render('admin/media/folders', [
+            'pageTitle' => 'Media Folders',
+            'folders' => $this->mediaFolderRepository->allWithParents(),
+            'folderTree' => $this->mediaFolderRepository->getTreeList(),
+            'mediaCountByFolder' => $this->mediaFolderRepository->mediaCountByFolder(),
+            'childCountByFolder' => $this->mediaFolderRepository->childCountByFolder(),
+            'flash' => $this->readFlashFromQuery(),
+        ], 'admin');
+    }
 
-        if ($file === null || ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-            $errors['file'] = 'A file is required.';
-            return $errors;
+    public function createFolder(): void
+    {
+        if (!$this->request->isPost()) {
+            $this->redirect('/admin/media/folders');
+            return;
         }
 
-        if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
-            $errors['file'] = 'Upload failed. Please try again.';
-            return $errors;
+        $name = trim((string) $this->request->getPost('name', ''));
+        $parentId = $this->normalizeFolderId((string) $this->request->getPost('parent_id', ''));
+
+        if ($name === '') {
+            $this->redirect('/admin/media/folders?error=Folder+name+is+required');
+            return;
         }
 
-        if (!isset($file['tmp_name'], $file['name'], $file['size']) || !is_uploaded_file($file['tmp_name'])) {
-            $errors['file'] = 'Invalid uploaded file.';
-            return $errors;
+        if ($parentId !== null && $this->mediaFolderRepository->find($parentId) === null) {
+            $this->redirect('/admin/media/folders?error=Invalid+parent+folder');
+            return;
         }
 
-        if ($form['title'] === '') {
-            $filename = pathinfo((string) $file['name'], PATHINFO_FILENAME);
-            if (trim($filename) === '') {
-                $errors['title'] = 'Title is required.';
+        $slug = $this->mediaFolderRepository->generateUniqueSlug($name, $parentId);
+        $folder = new MediaFolder([
+            'name' => $name,
+            'slug' => $slug,
+            'parent_id' => $parentId,
+        ]);
+
+        $this->mediaFolderRepository->save($folder);
+        $this->redirect('/admin/media/folders?success=Folder+created');
+    }
+
+    public function editFolder(): void
+    {
+        if (!$this->request->isPost()) {
+            $this->redirect('/admin/media/folders');
+            return;
+        }
+
+        $id = (int) $this->request->getPost('id', 0);
+        $folder = $this->mediaFolderRepository->find($id);
+
+        if ($folder === null) {
+            $this->redirect('/admin/media/folders?error=Folder+not+found');
+            return;
+        }
+
+        $name = trim((string) $this->request->getPost('name', ''));
+        $parentId = $this->normalizeFolderId((string) $this->request->getPost('parent_id', ''));
+
+        if ($name === '') {
+            $this->redirect('/admin/media/folders?error=Folder+name+is+required');
+            return;
+        }
+
+        if ($parentId !== null) {
+            if ($parentId === (int) $folder->id) {
+                $this->redirect('/admin/media/folders?error=Folder+cannot+be+its+own+parent');
+                return;
+            }
+
+            if ($this->mediaFolderRepository->isDescendantOf($parentId, (int) $folder->id)) {
+                $this->redirect('/admin/media/folders?error=Cannot+move+folder+under+its+own+descendant');
+                return;
             }
         }
 
-        if ((int) $file['size'] <= 0) {
-            $errors['file'] = 'Uploaded file is empty.';
-        } elseif ((int) $file['size'] > self::MAX_FILE_SIZE) {
-            $errors['file'] = 'Maximum file size is ' . (int) (self::MAX_FILE_SIZE / 1024 / 1024) . ' MB.';
+        $folder->name = $name;
+        $folder->parent_id = $parentId;
+        $folder->slug = $this->mediaFolderRepository->generateUniqueSlug($name, $parentId, (int) $folder->id);
+        $this->mediaFolderRepository->save($folder);
+
+        $this->redirect('/admin/media/folders?success=Folder+updated');
+    }
+
+    public function deleteFolder(): void
+    {
+        if (!$this->request->isPost()) {
+            $this->redirect('/admin/media/folders');
+            return;
         }
 
-        $originalName = (string) $file['name'];
-        $extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
-        if (!in_array($extension, self::ALLOWED_EXTENSIONS, true)) {
-            $errors['file'] = 'Allowed file types: ' . implode(', ', self::ALLOWED_EXTENSIONS) . '.';
-            return $errors;
+        $id = (int) $this->request->getPost('id', 0);
+        $folder = $this->mediaFolderRepository->find($id);
+
+        if ($folder === null) {
+            $this->redirect('/admin/media/folders?error=Folder+not+found');
+            return;
         }
 
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mimeType = $finfo !== false ? (string) finfo_file($finfo, $file['tmp_name']) : '';
-        if ($finfo !== false) {
-            finfo_close($finfo);
+        if ($this->mediaFolderRepository->hasChildren($id)) {
+            $this->redirect('/admin/media/folders?error=Folder+has+child+folders');
+            return;
         }
 
-        $allowedMimeTypes = self::ALLOWED_MIME_TYPES[$extension] ?? [];
-        if (!in_array($mimeType, $allowedMimeTypes, true)) {
-            $errors['file'] = 'Detected MIME type is not allowed for this file extension.';
+        if ($this->mediaRepository->countByFolderId($id) > 0) {
+            $this->redirect('/admin/media/folders?error=Folder+contains+media+items');
+            return;
+        }
+
+        $this->mediaFolderRepository->delete($id);
+        $this->redirect('/admin/media/folders?success=Folder+deleted');
+    }
+
+    private function validateUploadForm(array $form, ?array $file): array
+    {
+        $errors = $this->mediaStorageService->validateUploadedFile($file);
+
+        $folderId = $this->normalizeFolderId($form['folder_id']);
+        if ($form['folder_id'] !== '' && $folderId === null) {
+            $errors['folder_id'] = 'Invalid folder.';
+        }
+
+        if ($folderId !== null && $this->mediaFolderRepository->find($folderId) === null) {
+            $errors['folder_id'] = 'Selected folder does not exist.';
+        }
+
+        if ($form['filename'] !== '' && !$this->mediaStorageService->isValidDisplayFilename($form['filename'])) {
+            $errors['filename'] = 'Filename contains invalid characters.';
         }
 
         return $errors;
     }
 
-    private function storeUploadedFile(array $file, array $form): array
+    private function validateEditForm(array $form, Media $media): array
     {
-        $this->ensureUploadDirectory();
+        $errors = [];
 
-        $originalName = (string) $file['name'];
-        $extension = strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION));
-        $baseName = pathinfo($originalName, PATHINFO_FILENAME);
-        $safeBaseName = $this->slugify($baseName !== '' ? $baseName : 'media');
-        $filename = $safeBaseName . '-' . bin2hex(random_bytes(8)) . '.' . $extension;
-        $relativePath = 'uploads/' . $filename;
-        $absolutePath = BASE_PATH . '/public/' . $relativePath;
-
-        if (!move_uploaded_file($file['tmp_name'], $absolutePath)) {
-            throw new \RuntimeException('Failed to move uploaded file.');
+        $folderId = $this->normalizeFolderId($form['folder_id']);
+        if ($form['folder_id'] !== '' && $folderId === null) {
+            $errors['folder_id'] = 'Invalid folder.';
         }
 
-        $mimeType = (string) mime_content_type($absolutePath);
-        $dimensions = $this->extractDimensions($absolutePath, $mimeType);
+        if ($folderId !== null && $this->mediaFolderRepository->find($folderId) === null) {
+            $errors['folder_id'] = 'Selected folder does not exist.';
+        }
 
-        return [
-            'default_title' => $this->humanizeTitle($baseName),
-            'original_name' => $originalName,
-            'filename' => $filename,
-            'mime_type' => $mimeType,
-            'extension' => $extension,
-            'size_bytes' => (int) filesize($absolutePath),
-            'storage_path' => $relativePath,
-            'public_url' => '/' . $relativePath,
-            'width' => $dimensions['width'],
-            'height' => $dimensions['height'],
-        ];
+        if ($form['filename'] === '') {
+            $errors['filename'] = 'Filename is required.';
+        } elseif (!$this->mediaStorageService->isValidDisplayFilename($form['filename'])) {
+            $errors['filename'] = 'Filename contains invalid characters.';
+        }
+
+        if ($form['title'] === '') {
+            $errors['title'] = 'Title is required.';
+        }
+
+        if ($form['rename_physical']) {
+            $targetStoredName = $this->mediaStorageService->previewStoredName($form['filename'], $media->extension);
+            $existing = $this->mediaRepository->findByStoredName($targetStoredName);
+            if ($existing !== null && (int) $existing->id !== (int) $media->id) {
+                $errors['filename'] = 'Filename already exists. Please choose a different name.';
+            }
+        }
+
+        return $errors;
     }
 
-    private function ensureUploadDirectory(): void
+    private function normalizeFolderId(string $raw): ?int
     {
-        $directory = BASE_PATH . '/public/uploads';
-
-        if (is_dir($directory)) {
-            return;
+        $raw = trim($raw);
+        if ($raw === '') {
+            return null;
         }
 
-        if (!mkdir($directory, 0755, true) && !is_dir($directory)) {
-            throw new \RuntimeException('Unable to create upload directory.');
+        if (!ctype_digit($raw)) {
+            return null;
         }
+
+        $id = (int) $raw;
+        return $id > 0 ? $id : null;
     }
 
-    private function extractDimensions(string $absolutePath, string $mimeType): array
+    private function resolveFolderIdFromQuery(): ?int
     {
-        if (!str_starts_with($mimeType, 'image/')) {
-            return ['width' => null, 'height' => null];
+        $raw = trim((string) $this->request->getQuery('folder_id', ''));
+        if ($raw === '') {
+            return null;
         }
 
-        $dimensions = @getimagesize($absolutePath);
-        if ($dimensions === false) {
-            return ['width' => null, 'height' => null];
+        if (!ctype_digit($raw)) {
+            return null;
         }
 
-        return [
-            'width' => isset($dimensions[0]) ? (int) $dimensions[0] : null,
-            'height' => isset($dimensions[1]) ? (int) $dimensions[1] : null,
-        ];
-    }
+        $id = (int) $raw;
+        if ($id <= 0) {
+            return null;
+        }
 
-    private function slugify(string $value): string
-    {
-        $value = strtolower(trim($value));
-        $value = preg_replace('/[^a-z0-9]+/', '-', $value) ?? 'media';
-        $value = trim($value, '-');
-
-        return $value !== '' ? $value : 'media';
-    }
-
-    private function humanizeTitle(string $value): string
-    {
-        $value = preg_replace('/[_-]+/', ' ', trim($value)) ?? '';
-        $value = trim($value);
-
-        return $value !== '' ? ucwords($value) : 'Untitled Media';
+        return $this->mediaFolderRepository->find($id) !== null ? $id : null;
     }
 
     private function readFlashFromQuery(): ?array

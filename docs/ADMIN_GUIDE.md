@@ -14,6 +14,8 @@ The sidebar contains links to all admin sections:
 | Pages | `/admin/pages` |
 | Block Types | `/admin/block-types` |
 | Collections | `/admin/collections` |
+| Media | `/admin/media` |
+| Media Folders | `/admin/media/folders` |
 | Design Settings | `/admin/design` |
 
 ---
@@ -192,6 +194,105 @@ Click **Delete** on a block row within the page edit screen. The block is remove
 
 Blocks are rendered in ascending `sort_order` value. Use multiples of 10 (10, 20, 30) to leave room for inserting blocks between existing ones later.
 
+### Using media in block JSON
+
+The page edit screen includes a **Media Helper** panel. You can filter media by folder and copy either a direct media path or a ready-to-paste JSON snippet into `props_json`.
+
+Use paths like:
+
+```json
+{
+  "image_url": "/uploads/media/hero-image-2fd1a9a8d2f4c7a1.webp"
+}
+```
+
+Or richer snippets:
+
+```json
+{
+  "media": {
+    "path": "/uploads/media/product-demo-a9f15f5d3bd910c1.mp4",
+    "filename": "product-demo.mp4",
+    "type": "video"
+  }
+}
+```
+
+---
+
+## Media Library
+
+**URL:** `/admin/media`
+
+The media library stores uploaded files in `public/uploads/media/` and keeps metadata in SQLite. Supported file groups:
+
+- **Images:** `jpg`, `jpeg`, `png`, `webp`, `gif`, `svg`
+- **Videos:** `mp4`, `webm`, `mov`
+- **Documents:** `pdf`
+
+### What the media list shows
+
+- Preview (image thumbnail, video preview, or PDF badge)
+- Display filename
+- MIME type and extension
+- File size
+- Folder name
+- Public path for reuse in JSON data
+
+### Uploading media
+
+Go to `/admin/media/upload` and provide:
+
+1. File
+2. Optional folder
+3. Optional display filename
+4. Optional title and alt text
+
+Upload security includes extension + MIME validation, max-size validation, server-side safe storage naming, and path traversal protection.
+
+### Editing media metadata
+
+Go to `/admin/media/edit?id=<id>` to edit:
+
+- Folder assignment
+- Display filename
+- Title
+- Alt text
+- Optional physical file rename (safe server-side rename)
+
+By default, editing display filename does **not** change the physical path. Physical rename is an explicit opt-in checkbox.
+
+### Deleting media
+
+Delete actions remove both:
+
+- Database record
+- Physical file from disk
+
+---
+
+## Media Folders
+
+**URL:** `/admin/media/folders`
+
+Media folders support nested hierarchies with optional parent folder references.
+
+### Folder actions
+
+- Create root or nested folder
+- Rename folder
+- Re-parent folder (move under another folder)
+- Delete folder
+
+### Safety rules
+
+- A folder cannot be its own parent
+- A folder cannot be moved under its own descendant
+- Folder deletion is blocked if child folders exist
+- Folder deletion is blocked if media items are still assigned
+
+Use folder filtering in media list and helper panels to quickly find reusable media paths.
+
 ---
 
 ## Collections
@@ -264,6 +365,10 @@ Click **Edit** on any entry in the collection's entry table. Update the status o
 ### Deleting an entry
 
 On the collection edit page, click **Delete** in the entry table row. The entry is deleted immediately with no undo.
+
+### Using media in collection entry JSON
+
+Collection entry create/edit screens include the same folder-filterable **Media Helper** panel used on page edit. Copy the media path or snippet directly into `data_json`.
 
 ---
 

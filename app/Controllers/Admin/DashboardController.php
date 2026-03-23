@@ -6,6 +6,7 @@ use App\Core\Controller;
 use App\Repositories\BlockTypeRepository;
 use App\Repositories\CollectionRepository;
 use App\Repositories\DesignSettingRepository;
+use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
 use App\Repositories\PageRepository;
 
@@ -18,6 +19,7 @@ class DashboardController extends Controller
         $collectionRepository = new CollectionRepository();
         $designSettingRepository = new DesignSettingRepository();
         $mediaRepository = new MediaRepository();
+        $mediaFolderRepository = new MediaFolderRepository();
 
         $stats = [
             'pages' => count($pageRepository->all()),
@@ -25,6 +27,7 @@ class DashboardController extends Controller
             'block_types' => count($blockTypeRepository->all()),
             'collections' => count($collectionRepository->all()),
             'media' => count($mediaRepository->all()),
+            'media_folders' => count($mediaFolderRepository->all()),
             'design_settings' => count($designSettingRepository->all()),
         ];
 

@@ -14,6 +14,8 @@ xcms uses a single SQLite file stored at `storage/database.sqlite`. The schema i
 | `page_blocks` | Instances of a block type placed on a page |
 | `collections` | Structured content lists |
 | `collection_entries` | Individual entries within a collection |
+| `media_folders` | Nested folder hierarchy for media organization |
+| `media` | Uploaded images, videos, and documents |
 | `design_settings` | Global CSS custom property key/value pairs |
 
 ---
@@ -284,6 +286,90 @@ The settings are output as a CSS `:root {}` block at the top of every public pag
 
 ---
 
+## Table: `media_folders`
+
+Defined in `database/migrations/009_media_folders_and_media_columns.sql`.
+
+| Column | Type | Nullable | Default | Description |
+|---|---|---|---|---|
+| `id` | INTEGER PK | — | auto | Primary key |
+| `name` | TEXT | No | — | Folder display name |
+| `slug` | TEXT | No | — | URL-safe/identifier-friendly name, unique within same parent |
+| `parent_id` | INTEGER FK | Yes | NULL | Self-reference to `media_folders.id` for nesting |
+| `created_at` | TEXT | No | — | ISO 8601 creation timestamp |
+| `updated_at` | TEXT | No | — | ISO 8601 last-updated timestamp |
+
+**Indexes:**
+- Composite unique index on `(parent_id, slug)`
+- Index on `parent_id`
+- Index on `name`
+
+**Key relationships:**
+- Self-referential hierarchy via `parent_id`
+- One folder can have many child folders
+- One folder can have many `media` records (`media.folder_id`)
+
+**Important behavior:**
+
+Folder deletion is intentionally guarded in application logic:
+- blocked if folder has child folders
+- blocked if folder still contains media items
+
+This prevents broken hierarchies and accidental orphaning.
+
+---
+
+## Table: `media`
+
+Initially created in `database/migrations/008_create_media.sql` and extended in `database/migrations/009_media_folders_and_media_columns.sql`.
+
+| Column | Type | Nullable | Default | Description |
+|---|---|---|---|---|
+| `id` | INTEGER PK | — | auto | Primary key |
+| `folder_id` | INTEGER FK | Yes | NULL | Optional folder assignment (`media_folders.id`) |
+| `filename` | TEXT | No | — | Editable display filename |
+| `original_name` | TEXT | No | — | Original uploaded client filename |
+| `stored_name` | TEXT | Yes* | NULL | Physical server-side file name (unique by generation strategy) |
+| `mime_type` | TEXT | No | — | Detected MIME type |
+| `extension` | TEXT | No | — | Lowercase extension |
+| `file_size` | INTEGER | Yes* | NULL | File size in bytes |
+| `path` | TEXT | Yes* | NULL | Public relative path (for example `/uploads/media/file.webp`) |
+| `type` | TEXT | Yes* | NULL | `image`, `video`, or `document` |
+| `title` | TEXT | Yes | NULL | Optional media title |
+| `alt_text` | TEXT | Yes | NULL | Optional image alt text |
+| `width` | INTEGER | Yes | NULL | Image width when applicable |
+| `height` | INTEGER | Yes | NULL | Image height when applicable |
+| `created_at` | TEXT | No | — | ISO 8601 creation timestamp |
+| `updated_at` | TEXT | No | — | ISO 8601 last-updated timestamp |
+
+`*` Columns added in migration `009` and backfilled for existing rows.
+
+**Indexes:**
+- Unique index from migration 008 on `filename` (legacy)
+- Index on `created_at`
+- Index on `mime_type`
+- Index on `folder_id`
+- Index on `type`
+- Index on `path`
+
+**Key relationships:**
+- `folder_id` references `media_folders.id` (nullable)
+
+**Important fields:**
+
+`filename` is an editor-facing name used in admin UI and helper snippets.
+
+`stored_name` is the real filename on disk. It is generated server-side with randomness to avoid collisions and should never be trusted from user input.
+
+`path` is the reusable public path used by pages/blocks/collections in JSON fields.
+
+`type` drives preview behavior in admin:
+- image → `<img>` preview
+- video → `<video>` preview
+- document → PDF label
+
+---
+
 ## Relationships Summary
 
 ```
@@ -293,6 +379,10 @@ pages
 
 collections
   └── collection_entries (collection_id → collections.id, CASCADE)
+
+media_folders
+  ├── media_folders (parent_id → media_folders.id, self-reference)
+  └── media (folder_id → media_folders.id, nullable)
 
 design_settings (standalone, no foreign keys)
 migrations (standalone, managed by MigrationRunner)
@@ -312,3 +402,4 @@ migrations (standalone, managed by MigrationRunner)
 | `page_blocks` | `bindings_json` | Future dynamic binding configuration | JSON object (currently `{}`) |
 | `collections` | `schema_json` | Documents expected structure of entry `data_json` | JSON object |
 | `collection_entries` | `data_json` | Full entry content | JSON object (schema matches parent collection's `schema_json`) |
+| `media` | `path` | Public path used by page/collection JSON fields | String |

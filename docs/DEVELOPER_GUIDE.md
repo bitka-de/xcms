@@ -185,6 +185,75 @@ Do not give admin panel access to untrusted users without adding an authenticati
 
 ## How to Extend xcms
 
+## Media Library Internals
+
+xcms media management is implemented with:
+
+- `App\Models\Media`
+- `App\Models\MediaFolder`
+- `App\Repositories\MediaRepository`
+- `App\Repositories\MediaFolderRepository`
+- `App\Services\MediaStorageService`
+- `App\Controllers\Admin\MediaAdminController`
+
+### Storage strategy
+
+Files are stored flat under:
+
+`public/uploads/media/`
+
+Each upload receives a server-generated unique `stored_name` and corresponding `path` (for example `/uploads/media/hero-8bde23d88d6ab12f.webp`). Folder organization is stored in SQLite metadata (`folder_id`) instead of relying on physical nested directories.
+
+This approach is robust for renames and folder moves because:
+
+- moving between folders only updates metadata
+- path collisions are avoided by random stored names
+- physical paths stay stable unless explicit physical rename is requested
+
+### Display filename vs physical stored name
+
+`filename` is the editable display filename.
+
+`stored_name` is the physical disk filename generated and controlled by the server.
+
+In media edit:
+
+- changing `filename` updates metadata only
+- checking **rename physical file** triggers safe physical rename with a newly generated unique stored name
+- when physical rename is applied, `path` is updated accordingly
+
+### Upload validation rules
+
+Validation is implemented in `MediaStorageService`:
+
+- extension allowlist
+- MIME type allowlist by extension
+- blocked executable/script extension list
+- max file size
+- `is_uploaded_file` enforcement
+- SVG safety check against inline script/event payloads
+
+### Folder hierarchy safety
+
+Folder operations enforce:
+
+- no self-parent assignment
+- no cyclical hierarchy (cannot move under descendant)
+- delete blocked when child folders exist
+- delete blocked when folder still contains media
+
+### Helper panels for JSON fields
+
+Page block and collection entry forms load media helper context from repositories and expose:
+
+- folder filter
+- file path
+- filename
+- media type
+- copyable JSON snippets
+
+This keeps media reusable in `props_json` and `data_json` without changing the block or collection schema model.
+
 ### Adding a new admin section
 
 1. Create a controller in `app/Controllers/Admin/` extending `App\Core\Controller`

@@ -8,17 +8,23 @@ use App\Core\Response;
 use App\Models\CollectionEntry;
 use App\Repositories\CollectionEntryRepository;
 use App\Repositories\CollectionRepository;
+use App\Repositories\MediaFolderRepository;
+use App\Repositories\MediaRepository;
 
 class CollectionEntryAdminController extends Controller
 {
     private CollectionRepository $collectionRepository;
     private CollectionEntryRepository $collectionEntryRepository;
+    private MediaRepository $mediaRepository;
+    private MediaFolderRepository $mediaFolderRepository;
 
     public function __construct(Request $request, Response $response)
     {
         parent::__construct($request, $response);
         $this->collectionRepository = new CollectionRepository();
         $this->collectionEntryRepository = new CollectionEntryRepository();
+        $this->mediaRepository = new MediaRepository();
+        $this->mediaFolderRepository = new MediaFolderRepository();
     }
 
     public function index(): void
@@ -59,6 +65,7 @@ class CollectionEntryAdminController extends Controller
                     'collection' => $collection,
                     'form' => $data,
                     'errors' => $errors,
+                    ...$this->buildMediaHelperContext(),
                     'flash' => [
                         'type' => 'error',
                         'message' => 'Please fix the validation errors.',
@@ -86,6 +93,7 @@ class CollectionEntryAdminController extends Controller
                 'status' => 'draft',
             ],
             'errors' => [],
+            ...$this->buildMediaHelperContext(),
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
     }
@@ -114,6 +122,7 @@ class CollectionEntryAdminController extends Controller
                     'entry' => $entry,
                     'form' => $data,
                     'errors' => $errors,
+                    ...$this->buildMediaHelperContext(),
                     'flash' => [
                         'type' => 'error',
                         'message' => 'Please fix the validation errors.',
@@ -139,6 +148,7 @@ class CollectionEntryAdminController extends Controller
                 'status' => $entry->status,
             ],
             'errors' => [],
+            ...$this->buildMediaHelperContext(),
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
     }
@@ -217,5 +227,24 @@ class CollectionEntryAdminController extends Controller
             'pageCss' => '',
             'pageJs' => '',
         ], 'main');
+    }
+
+    private function buildMediaHelperContext(): array
+    {
+        $raw = trim((string) $this->request->getQuery('media_folder_id', ''));
+        $folderId = null;
+
+        if ($raw !== '' && ctype_digit($raw)) {
+            $candidate = (int) $raw;
+            if ($candidate > 0 && $this->mediaFolderRepository->find($candidate) !== null) {
+                $folderId = $candidate;
+            }
+        }
+
+        return [
+            'mediaFolders' => $this->mediaFolderRepository->getTreeList(),
+            'mediaItems' => $this->mediaRepository->allForHelper($folderId, 100),
+            'selectedMediaFolderId' => $folderId,
+        ];
     }
 }

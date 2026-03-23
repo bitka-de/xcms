@@ -43,7 +43,17 @@ return [
 
     // Admin media library
     '/admin/media' => ['controller' => 'Admin\MediaAdminController', 'action' => 'index'],
-    '/admin/media/upload' => ['controller' => 'Admin\MediaAdminController', 'action' => 'create'],
+    '/admin/media/upload' => ['controller' => 'Admin\MediaAdminController', 'action' => 'upload'],
+    '/admin/media/edit' => ['controller' => 'Admin\MediaAdminController', 'action' => 'edit'],
+    '/admin/media/delete' => ['controller' => 'Admin\MediaAdminController', 'action' => 'delete'],
+
+    // Admin media folders
+    '/admin/media/folders' => ['controller' => 'Admin\MediaAdminController', 'action' => 'folders'],
+    '/admin/media/folders/create' => ['controller' => 'Admin\MediaAdminController', 'action' => 'createFolder'],
+    '/admin/media/folders/edit' => ['controller' => 'Admin\MediaAdminController', 'action' => 'editFolder'],
+    '/admin/media/folders/delete' => ['controller' => 'Admin\MediaAdminController', 'action' => 'deleteFolder'],
+
+    // Backward-compatible media edit route
     '/admin/media/:id/edit' => ['controller' => 'Admin\MediaAdminController', 'action' => 'edit'],
 
     // Public fallback

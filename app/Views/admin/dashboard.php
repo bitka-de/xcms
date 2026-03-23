@@ -35,6 +35,12 @@
     </article>
 
     <article class="stat-card">
+        <h3>Media Folders</h3>
+        <p class="stat-value"><?= (int) ($stats['media_folders'] ?? 0) ?></p>
+        <a href="/admin/media/folders">Manage folders</a>
+    </article>
+
+    <article class="stat-card">
         <h3>Design Settings</h3>
         <p class="stat-value"><?= (int) ($stats['design_settings'] ?? 0) ?></p>
         <a href="/admin/design">Edit design settings</a>
