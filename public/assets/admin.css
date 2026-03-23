@@ -2563,6 +2563,10 @@ body {
     margin-top: 12px;
 }
 
+.media-manager-empty-live[hidden] {
+    display: none !important;
+}
+
 .media-empty-subtle {
     font-size: 13px;
     color: #64748b;

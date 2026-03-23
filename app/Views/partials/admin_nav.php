@@ -75,6 +75,18 @@ $isMediaSection = strpos($currentPath, '/admin/media') === 0;
             <?php if ($isMediaSection): ?>
                 <ul class="admin-subnav">
                     <li>
+                        <a href="/admin/media/upload">
+                            <span class="admin-nav-link-label">
+                                <span class="admin-nav-icon" aria-hidden="true">
+                                    <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-upload-icon lucide-upload" viewBox="0 0 24 24" focusable="false">
+                                        <path d="M12 3v12m5-7-5-5-5 5m14 7v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    </svg>
+                                </span>
+                                <span>Upload Media</span>
+                            </span>
+                        </a>
+                    </li>
+                    <li>
                         <a href="/admin/media/folders">
                             <span class="admin-nav-link-label">
                                 <span class="admin-nav-icon" aria-hidden="true">
