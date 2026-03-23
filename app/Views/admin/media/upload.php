@@ -106,13 +106,14 @@ $formatBytes = static function (int $bytes): string {
 <script>
 (function () {
     var CHUNK_SIZE = 5 * 1024 * 1024;
+    var CHUNK_ENDPOINT = '/admin/media/upload/chunk';
     var form = document.querySelector('[data-media-upload-form]');
+
     if (!form) {
         return;
     }
 
     var fileInput = form.querySelector('[data-upload-file]');
-    var submitButton = form.querySelector('[data-upload-submit]');
     var controls = form.querySelectorAll('[data-upload-control]');
     var backLink = form.querySelector('[data-upload-back-link]');
     var statusPanel = form.querySelector('[data-upload-status-panel]');
@@ -120,6 +121,7 @@ $formatBytes = static function (int $bytes): string {
     var progressFill = form.querySelector('[data-upload-progress-fill]');
     var percentEl = form.querySelector('[data-upload-percent]');
     var statusEl = form.querySelector('[data-upload-status]');
+
     function setControlsDisabled(disabled) {
         controls.forEach(function (el) {
             el.disabled = disabled;
@@ -138,14 +140,18 @@ $formatBytes = static function (int $bytes): string {
 
     function setProgress(percent) {
         var safePercent = Math.max(0, Math.min(100, percent));
+        var integerPercent = Math.round(safePercent);
+
         if (progressFill) {
             progressFill.style.width = safePercent.toFixed(2) + '%';
         }
+
         if (progressEl) {
-            progressEl.setAttribute('aria-valuenow', String(Math.round(safePercent)));
+            progressEl.setAttribute('aria-valuenow', String(integerPercent));
         }
+
         if (percentEl) {
-            percentEl.textContent = Math.round(safePercent) + '%';
+            percentEl.textContent = integerPercent + '%';
         }
     }
 
@@ -169,8 +175,80 @@ $formatBytes = static function (int $bytes): string {
         return String(Date.now()) + '-' + String(Math.random()).slice(2, 12);
     }
 
+    function parseJsonSafe(text) {
+        try {
+            return JSON.parse(text);
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function wait(ms) {
+        return new Promise(function (resolve) {
+            window.setTimeout(resolve, ms);
+        });
+    }
+
+    function uploadSingleChunk(payload, uploadedBeforeChunk, fileSize) {
+        return new Promise(function (resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', CHUNK_ENDPOINT, true);
+            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+            xhr.upload.onprogress = function (event) {
+                if (!event.lengthComputable) {
+                    return;
+                }
+
+                var uploadedOverall = uploadedBeforeChunk + event.loaded;
+                setProgress((uploadedOverall / fileSize) * 100);
+            };
+
+            xhr.onload = function () {
+                var json = parseJsonSafe(xhr.responseText || '');
+
+                if (xhr.status < 200 || xhr.status >= 300 || !json || !json.success) {
+                    var message = json && json.error ? json.error : 'Upload failed.';
+                    reject(new Error(message));
+                    return;
+                }
+
+                resolve(json);
+            };
+
+            xhr.onerror = function () {
+                reject(new Error('Network error during upload.'));
+            };
+
+            xhr.send(payload);
+        });
+    }
+
+    function buildChunkPayload(file, chunkBlob, uploadId, chunkIndex, totalChunks, metadata) {
+        var payload = new FormData();
+        payload.append('chunk', chunkBlob, file.name);
+        payload.append('upload_id', uploadId);
+        payload.append('chunk_index', String(chunkIndex));
+        payload.append('total_chunks', String(totalChunks));
+
+        // Required payload keys for the backend chunk contract.
+        payload.append('file_name', file.name);
+        payload.append('file_size', String(file.size));
+
+        // Backward-compatible keys already used in controller/service.
+        payload.append('original_name', file.name);
+        payload.append('total_size', String(file.size));
+
+        payload.append('folder_id', metadata.folder_id);
+        payload.append('filename', metadata.filename);
+        payload.append('title', metadata.title);
+        payload.append('alt_text', metadata.alt_text);
+
+        return payload;
+    }
+
     form.addEventListener('submit', async function (event) {
-        if (!window.fetch || !window.FormData || !fileInput || !fileInput.files || fileInput.files.length === 0) {
+        if (!window.FormData || !window.XMLHttpRequest || !fileInput || !fileInput.files || fileInput.files.length === 0) {
             return;
         }
 
@@ -185,7 +263,14 @@ $formatBytes = static function (int $bytes): string {
 
         var totalChunks = Math.ceil(file.size / CHUNK_SIZE);
         var uploadId = makeUploadId();
+        var startedAt = Date.now();
         var formDataSnapshot = new FormData(form);
+        var metadata = {
+            folder_id: String(formDataSnapshot.get('folder_id') || ''),
+            filename: String(formDataSnapshot.get('filename') || ''),
+            title: String(formDataSnapshot.get('title') || ''),
+            alt_text: String(formDataSnapshot.get('alt_text') || '')
+        };
         var uploadedBytes = 0;
 
         setControlsDisabled(true);
@@ -200,36 +285,8 @@ $formatBytes = static function (int $bytes): string {
                 var end = Math.min(start + CHUNK_SIZE, file.size);
                 var chunkBlob = file.slice(start, end);
 
-                var payload = new FormData();
-                payload.append('chunk', chunkBlob, file.name);
-                payload.append('upload_id', uploadId);
-                payload.append('chunk_index', String(chunkIndex));
-                payload.append('total_chunks', String(totalChunks));
-                payload.append('original_name', file.name);
-                payload.append('total_size', String(file.size));
-                payload.append('folder_id', String(formDataSnapshot.get('folder_id') || ''));
-                payload.append('filename', String(formDataSnapshot.get('filename') || ''));
-                payload.append('title', String(formDataSnapshot.get('title') || ''));
-                payload.append('alt_text', String(formDataSnapshot.get('alt_text') || ''));
-
-                var response = await fetch('/admin/media/upload/chunk', {
-                    method: 'POST',
-                    body: payload,
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest'
-                    }
-                });
-
-                var json;
-                try {
-                    json = await response.json();
-                } catch (_error) {
-                    throw new Error('Server returned an invalid response.');
-                }
-
-                if (!response.ok || !json.success) {
-                    throw new Error(json.error || 'Upload failed.');
-                }
+                var payload = buildChunkPayload(file, chunkBlob, uploadId, chunkIndex, totalChunks, metadata);
+                var json = await uploadSingleChunk(payload, uploadedBytes, file.size);
 
                 uploadedBytes = end;
                 setProgress((uploadedBytes / file.size) * 100);
@@ -243,7 +300,13 @@ $formatBytes = static function (int $bytes): string {
             }
 
             setProgress(100);
-            setStatus('Upload complete. Redirecting to media details…', 'is-success');
+            setStatus('Upload completed successfully.', 'is-success');
+
+            var elapsedMs = Date.now() - startedAt;
+            var minVisibleMs = 3000;
+            if (elapsedMs < minVisibleMs) {
+                await wait(minVisibleMs - elapsedMs);
+            }
 
             if (finalResponse.redirect) {
                 window.location.href = finalResponse.redirect;
@@ -251,7 +314,6 @@ $formatBytes = static function (int $bytes): string {
             }
 
             setControlsDisabled(false);
-            return;
         } catch (error) {
             setStatus(error && error.message ? error.message : 'Upload failed.', 'is-error');
             setControlsDisabled(false);
