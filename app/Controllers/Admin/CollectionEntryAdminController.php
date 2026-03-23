@@ -10,6 +10,7 @@ use App\Repositories\CollectionEntryRepository;
 use App\Repositories\CollectionRepository;
 use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
+use App\Repositories\MediaTagRepository;
 
 class CollectionEntryAdminController extends Controller
 {
@@ -17,6 +18,7 @@ class CollectionEntryAdminController extends Controller
     private CollectionEntryRepository $collectionEntryRepository;
     private MediaRepository $mediaRepository;
     private MediaFolderRepository $mediaFolderRepository;
+    private MediaTagRepository $mediaTagRepository;
 
     public function __construct(Request $request, Response $response)
     {
@@ -24,6 +26,7 @@ class CollectionEntryAdminController extends Controller
         $this->collectionRepository = new CollectionRepository();
         $this->collectionEntryRepository = new CollectionEntryRepository();
         $this->mediaRepository = new MediaRepository();
+        $this->mediaTagRepository = new MediaTagRepository();
         $this->mediaFolderRepository = new MediaFolderRepository();
     }
 
@@ -89,7 +92,7 @@ class CollectionEntryAdminController extends Controller
             'pageTitle' => 'Create Entry',
             'collection' => $collection,
             'form' => [
-                'data_json' => '{\n  \n}',
+                'data_json' => "{\n  \n}",
                 'status' => 'draft',
             ],
             'errors' => [],
@@ -231,20 +234,40 @@ class CollectionEntryAdminController extends Controller
 
     private function buildMediaHelperContext(): array
     {
-        $raw = trim((string) $this->request->getQuery('media_folder_id', ''));
-        $folderId = null;
+        $q = trim((string) $this->request->getQuery('media_q', ''));
 
-        if ($raw !== '' && ctype_digit($raw)) {
-            $candidate = (int) $raw;
+        $folderRaw = trim((string) $this->request->getQuery('media_folder_id', ''));
+        $folderId = null;
+        if ($folderRaw !== '' && ctype_digit($folderRaw)) {
+            $candidate = (int) $folderRaw;
             if ($candidate > 0 && $this->mediaFolderRepository->find($candidate) !== null) {
                 $folderId = $candidate;
             }
         }
 
+        $tagRaw = trim((string) $this->request->getQuery('media_tag_id', ''));
+        $tagId = null;
+        if ($tagRaw !== '' && ctype_digit($tagRaw)) {
+            $candidate = (int) $tagRaw;
+            if ($candidate > 0 && $this->mediaTagRepository->find($candidate) !== null) {
+                $tagId = $candidate;
+            }
+        }
+
+        $mediaItems = $this->mediaRepository->searchWithFilters([
+            'q' => $q,
+            'folder_id' => $folderId,
+            'tag_id' => $tagId,
+            'type' => '',
+        ]);
+
         return [
             'mediaFolders' => $this->mediaFolderRepository->getTreeList(),
-            'mediaItems' => $this->mediaRepository->allForHelper($folderId, 100),
+            'mediaTags' => $this->mediaTagRepository->all(),
+            'mediaItems' => $this->mediaRepository->attachTagsToMediaList($mediaItems),
             'selectedMediaFolderId' => $folderId,
+            'selectedMediaTagId' => $tagId,
+            'mediaSearchQuery' => $q,
         ];
     }
 }

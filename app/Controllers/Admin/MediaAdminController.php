@@ -9,12 +9,14 @@ use App\Models\Media;
 use App\Models\MediaFolder;
 use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
+use App\Repositories\MediaTagRepository;
 use App\Services\MediaStorageService;
 
 class MediaAdminController extends Controller
 {
     private MediaRepository $mediaRepository;
     private MediaFolderRepository $mediaFolderRepository;
+    private MediaTagRepository $mediaTagRepository;
     private MediaStorageService $mediaStorageService;
 
     public function __construct(Request $request, Response $response)
@@ -22,22 +24,29 @@ class MediaAdminController extends Controller
         parent::__construct($request, $response);
         $this->mediaRepository = new MediaRepository();
         $this->mediaFolderRepository = new MediaFolderRepository();
+        $this->mediaTagRepository = new MediaTagRepository();
         $this->mediaStorageService = new MediaStorageService();
     }
 
     public function index(): void
     {
-        $folderId = $this->resolveFolderIdFromQuery();
-        $mediaItems = $this->mediaRepository->allByFolder($folderId);
+        $filters = $this->resolveListFiltersFromQuery();
+        $mediaItems = $this->mediaRepository->searchWithFilters($filters);
+        $mediaItems = $this->mediaRepository->attachTagsToMediaList($mediaItems);
         $folderTree = $this->mediaFolderRepository->getTreeList();
         $folderMap = $this->mediaFolderRepository->getIdNameMap();
+        $availableTags = $this->mediaTagRepository->all();
 
         $this->render('admin/media/index', [
             'pageTitle' => 'Media Library',
             'mediaItems' => $mediaItems,
             'folderTree' => $folderTree,
             'folderMap' => $folderMap,
-            'selectedFolderId' => $folderId,
+            'selectedFolderId' => $filters['folder_id'],
+            'selectedTagId' => $filters['tag_id'],
+            'selectedType' => $filters['type'],
+            'searchQuery' => $filters['q'],
+            'availableTags' => $availableTags,
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
     }
@@ -121,7 +130,7 @@ class MediaAdminController extends Controller
     public function edit(): void
     {
         $id = (int) $this->request->getQuery('id', $this->request->getParam('id', 0));
-        $media = $this->mediaRepository->find($id);
+        $media = $this->mediaRepository->findWithTags($id);
 
         if ($media === null) {
             $this->renderNotFound();
@@ -135,8 +144,19 @@ class MediaAdminController extends Controller
                 'filename' => trim((string) $this->request->getPost('filename', '')),
                 'title' => trim((string) $this->request->getPost('title', '')),
                 'alt_text' => trim((string) $this->request->getPost('alt_text', '')),
+                'copyright_text' => trim((string) $this->request->getPost('copyright_text', '')),
+                'copyright_author' => trim((string) $this->request->getPost('copyright_author', '')),
+                'license_name' => trim((string) $this->request->getPost('license_name', '')),
+                'license_url' => trim((string) $this->request->getPost('license_url', '')),
+                'source_url' => trim((string) $this->request->getPost('source_url', '')),
+                'usage_notes' => trim((string) $this->request->getPost('usage_notes', '')),
+                'attribution_required' => (string) $this->request->getPost('attribution_required', '') === '1',
+                'tags' => trim((string) $this->request->getPost('tags', '')),
                 'rename_physical' => (string) $this->request->getPost('rename_physical', '') === '1',
             ];
+
+            $tagNames = $this->parseCommaSeparatedTags($form['tags']);
+            $form['tags'] = $this->implodeTagNames($tagNames);
 
             $errors = $this->validateEditForm($form, $media);
 
@@ -159,6 +179,13 @@ class MediaAdminController extends Controller
             $media->filename = $this->mediaStorageService->normalizeDisplayFilename($form['filename'], $media->extension);
             $media->title = $form['title'];
             $media->alt_text = $form['alt_text'] !== '' ? $form['alt_text'] : null;
+            $media->copyright_text = $this->normalizeOptionalText($form['copyright_text']);
+            $media->copyright_author = $this->normalizeOptionalText($form['copyright_author']);
+            $media->license_name = $this->normalizeOptionalText($form['license_name']);
+            $media->license_url = $this->normalizeOptionalText($form['license_url']);
+            $media->source_url = $this->normalizeOptionalText($form['source_url']);
+            $media->usage_notes = $this->normalizeOptionalText($form['usage_notes']);
+            $media->attribution_required = $form['attribution_required'] ? 1 : 0;
 
             // Keep references stable by default: display filename can change without physical rename.
             // Physical rename is opt-in and generates a safe unique server-side name.
@@ -171,6 +198,7 @@ class MediaAdminController extends Controller
             }
 
             $this->mediaRepository->save($media);
+            $this->mediaRepository->syncTags((int) $media->id, $tagNames);
 
             $this->redirect('/admin/media/edit?id=' . $media->id . '&success=Media+updated');
             return;
@@ -185,6 +213,14 @@ class MediaAdminController extends Controller
                 'filename' => $media->filename,
                 'title' => $media->title,
                 'alt_text' => $media->alt_text ?? '',
+                'copyright_text' => $media->copyright_text ?? '',
+                'copyright_author' => $media->copyright_author ?? '',
+                'license_name' => $media->license_name ?? '',
+                'license_url' => $media->license_url ?? '',
+                'source_url' => $media->source_url ?? '',
+                'usage_notes' => $media->usage_notes ?? '',
+                'attribution_required' => (int) $media->attribution_required === 1,
+                'tags' => $this->tagsToCommaSeparated($media->tags),
                 'rename_physical' => false,
             ],
             'folderTree' => $this->mediaFolderRepository->getTreeList(),
@@ -378,6 +414,14 @@ class MediaAdminController extends Controller
             $errors['title'] = 'Title is required.';
         }
 
+        if ($form['license_url'] !== '' && !$this->isValidOptionalUrl($form['license_url'])) {
+            $errors['license_url'] = 'License URL must be a valid URL.';
+        }
+
+        if ($form['source_url'] !== '' && !$this->isValidOptionalUrl($form['source_url'])) {
+            $errors['source_url'] = 'Source URL must be a valid URL.';
+        }
+
         if ($form['rename_physical']) {
             $targetStoredName = $this->mediaStorageService->previewStoredName($form['filename'], $media->extension);
             $existing = $this->mediaRepository->findByStoredName($targetStoredName);
@@ -404,23 +448,89 @@ class MediaAdminController extends Controller
         return $id > 0 ? $id : null;
     }
 
-    private function resolveFolderIdFromQuery(): ?int
+    private function resolveListFiltersFromQuery(): array
     {
-        $raw = trim((string) $this->request->getQuery('folder_id', ''));
-        if ($raw === '') {
-            return null;
+        $q = trim((string) $this->request->getQuery('q', ''));
+
+        $folderRaw = trim((string) $this->request->getQuery('folder_id', ''));
+        $folderId = null;
+        if ($folderRaw !== '' && ctype_digit($folderRaw)) {
+            $candidate = (int) $folderRaw;
+            if ($candidate > 0 && $this->mediaFolderRepository->find($candidate) !== null) {
+                $folderId = $candidate;
+            }
         }
 
-        if (!ctype_digit($raw)) {
-            return null;
+        $tagRaw = trim((string) $this->request->getQuery('tag_id', ''));
+        $tagId = null;
+        if ($tagRaw !== '' && ctype_digit($tagRaw)) {
+            $candidate = (int) $tagRaw;
+            if ($candidate > 0 && $this->mediaTagRepository->find($candidate) !== null) {
+                $tagId = $candidate;
+            }
         }
 
-        $id = (int) $raw;
-        if ($id <= 0) {
-            return null;
+        $type = trim((string) $this->request->getQuery('type', ''));
+        if (!in_array($type, ['image', 'video', 'document'], true)) {
+            $type = '';
         }
 
-        return $this->mediaFolderRepository->find($id) !== null ? $id : null;
+        return [
+            'q' => $q,
+            'folder_id' => $folderId,
+            'tag_id' => $tagId,
+            'type' => $type,
+        ];
+    }
+
+    private function parseCommaSeparatedTags(string $input): array
+    {
+        $normalized = [];
+
+        foreach (explode(',', $input) as $part) {
+            $value = trim($part);
+            if ($value === '') {
+                continue;
+            }
+
+            $normalized[strtolower($value)] = $value;
+        }
+
+        return array_values($normalized);
+    }
+
+    private function implodeTagNames(array $tagNames): string
+    {
+        return implode(', ', $tagNames);
+    }
+
+    private function tagsToCommaSeparated(array $tags): string
+    {
+        $names = [];
+        foreach ($tags as $tag) {
+            if (!is_object($tag) || !property_exists($tag, 'name')) {
+                continue;
+            }
+
+            $name = trim((string) $tag->name);
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        return implode(', ', $names);
+    }
+
+    private function normalizeOptionalText(string $value): ?string
+    {
+        $value = trim($value);
+
+        return $value !== '' ? $value : null;
+    }
+
+    private function isValidOptionalUrl(string $value): bool
+    {
+        return filter_var($value, FILTER_VALIDATE_URL) !== false;
     }
 
     private function readFlashFromQuery(): ?array

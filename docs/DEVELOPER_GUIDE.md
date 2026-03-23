@@ -185,74 +185,290 @@ Do not give admin panel access to untrusted users without adding an authenticati
 
 ## How to Extend xcms
 
+The following sections explain how to add new sections, repositories, migrations, seeds, routes, and extend the media library in xcms.
+
+---
+
 ## Media Library Internals
 
 xcms media management is implemented with:
 
-- `App\Models\Media`
-- `App\Models\MediaFolder`
-- `App\Repositories\MediaRepository`
-- `App\Repositories\MediaFolderRepository`
-- `App\Services\MediaStorageService`
-- `App\Controllers\Admin\MediaAdminController`
+| Class | Namespace | Purpose |
+|---|---|---|
+| `Media` | `App\Models\Media` | Model for a single media file record |
+| `MediaTag` | `App\Models\MediaTag` | Model for a single tag |
+| `MediaFolder` | `App\Models\MediaFolder` | Model for a folder node |
+| `MediaRepository` | `App\Repositories\MediaRepository` | All media queries |
+| `MediaTagRepository` | `App\Repositories\MediaTagRepository` | Tag CRUD and slug generation |
+| `MediaFolderRepository` | `App\Repositories\MediaFolderRepository` | Folder tree queries |
+| `MediaStorageService` | `App\Services\MediaStorageService` | File uploads, validation, renaming |
+| `MediaAdminController` | `App\Controllers\Admin\MediaAdminController` | All `/admin/media/*` routes |
 
 ### Storage strategy
 
-Files are stored flat under:
+Files are stored flat under `public/uploads/media/`. Each upload receives a server-generated unique `stored_name` and a corresponding `path` (e.g. `/uploads/media/hero-8bde23d88d6ab12f.webp`). Folder organization is stored in SQLite metadata (`folder_id`) — moving a file between folders only updates metadata; the physical file never moves.
 
-`public/uploads/media/`
+Physical path stays stable unless an explicit rename is requested by the editor (opt-in checkbox on the edit form), at which point a new unique stored name is generated and `path` is updated.
 
-Each upload receives a server-generated unique `stored_name` and corresponding `path` (for example `/uploads/media/hero-8bde23d88d6ab12f.webp`). Folder organization is stored in SQLite metadata (`folder_id`) instead of relying on physical nested directories.
+### Display filename vs stored name
 
-This approach is robust for renames and folder moves because:
-
-- moving between folders only updates metadata
-- path collisions are avoided by random stored names
-- physical paths stay stable unless explicit physical rename is requested
-
-### Display filename vs physical stored name
-
-`filename` is the editable display filename.
-
-`stored_name` is the physical disk filename generated and controlled by the server.
-
-In media edit:
-
-- changing `filename` updates metadata only
-- checking **rename physical file** triggers safe physical rename with a newly generated unique stored name
-- when physical rename is applied, `path` is updated accordingly
+`filename` is the editable display name shown in the admin. `stored_name` is the physical disk name, server-controlled and never trusted from user input.
 
 ### Upload validation rules
 
-Validation is implemented in `MediaStorageService`:
+Implemented in `MediaStorageService`:
 
-- extension allowlist
-- MIME type allowlist by extension
-- blocked executable/script extension list
-- max file size
-- `is_uploaded_file` enforcement
-- SVG safety check against inline script/event payloads
+- Extension allowlist
+- MIME type allowlist matched by extension
+- Blocked executable/script extension list
+- Maximum file size enforcement
+- `is_uploaded_file()` check
+- SVG inline script/event attribute safety scan
+
+### Media tags: how they work
+
+Tags are stored in `media_tags` and assigned via `media_tag_assignments`. A media item can have zero or more tags.
+
+**Finding or creating tags — `MediaTagRepository`**
+
+`findOrCreateByName(string $name)` is the primary entry point. It lowercases and trims the name, checks for an existing match, and creates a new record with a generated slug if no match is found. This is how tags are implicitly created when an editor saves the media edit form.
+
+```php
+$tagRepo = new \App\Repositories\MediaTagRepository();
+$tag = $tagRepo->findOrCreateByName('hero images');
+// Returns existing tag or creates a new one with slug "hero-images"
+```
+
+**Syncing tags on a media item — `MediaRepository::syncTags()`**
+
+```php
+$mediaRepo->syncTags($media->id, ['outdoor', 'product shots', 'CC BY 4.0']);
+```
+
+`syncTags()` accepts a flat array of tag name strings. It:
+
+1. Finds or creates each tag via `MediaTagRepository::findOrCreateByName()`
+2. Wraps the operation in a transaction
+3. Deletes all existing assignments for the media item
+4. Inserts new assignments for each resolved tag ID
+
+Passing an empty array removes all tag assignments.
+
+**Loading tags onto a media item**
+
+Tags are not fetched automatically by default (to avoid N+1 queries on list pages).
+
+For a single item:
+
+```php
+$media = $mediaRepo->findWithTags($id);
+// $media->tags is an array of MediaTag objects
+```
+
+For a list of items:
+
+```php
+$items = $mediaRepo->searchWithFilters(['folder_id' => 3]);
+$items = $mediaRepo->attachTagsToMediaList($items);
+// Each $item->tags is now populated
+```
+
+`attachTagsToMediaList()` uses a single batch query for all IDs — it does not issue one query per item.
+
+**The `MediaTag` model**
+
+```php
+$tag->id        // int
+$tag->name      // string — original name as entered, e.g. "Hero Images"
+$tag->slug      // string — URL-safe lowercased slug, e.g. "hero-images"
+$tag->created_at
+$tag->updated_at
+```
+
+### Searching media — `MediaRepository::searchWithFilters()`
+
+`searchWithFilters(array $filters): array` is the central query method. It supports four independent filter keys, all optional:
+
+| Key | Type | Behavior |
+|---|---|---|
+| `q` | `string` | Full-text LIKE search across filename, original name, title, alt text, MIME type, copyright text, copyright author, license name, source URL, and tag names/slugs |
+| `folder_id` | `int` | Exact match on `m.folder_id` |
+| `tag_id` | `int` | EXISTS subquery on `media_tag_assignments` — only items with this tag |
+| `type` | `string` | Exact match on `m.type`; accepts `image`, `video`, or `document` only |
+
+All active filters are combined with AND. `DISTINCT` prevents duplicates when a search term matches multiple tag names on the same item.
+
+```php
+$mediaRepo = new \App\Repositories\MediaRepository();
+
+// Search for images tagged "outdoor" in folder 5
+$results = $mediaRepo->searchWithFilters([
+    'q'         => 'sunset',
+    'folder_id' => 5,
+    'tag_id'    => 12,
+    'type'      => 'image',
+]);
+
+// Load tags onto results
+$results = $mediaRepo->attachTagsToMediaList($results);
+```
+
+### Copyright and license fields on the `Media` model
+
+The following properties are available on every `Media` instance:
+
+| Property | Type | Description |
+|---|---|---|
+| `$media->copyright_text` | `?string` | Full copyright statement, e.g. `© 2024 Jane Smith` |
+| `$media->copyright_author` | `?string` | Author or rights holder name |
+| `$media->license_name` | `?string` | License identifier, e.g. `CC BY 4.0`, `All rights reserved` |
+| `$media->license_url` | `?string` | URL to the license text |
+| `$media->source_url` | `?string` | URL to the origin of the file |
+| `$media->attribution_required` | `int` | `1` if attribution is required by the license, `0` otherwise |
+| `$media->usage_notes` | `?string` | Free-form notes about allowed uses or restrictions |
+
+### Outputting copyright data in templates and frontend rendering
+
+Media metadata is stored in the database and not automatically embedded in public pages. To render copyright or attribution information, you need to fetch the media record in your controller or template logic and pass the relevant fields to your view.
+
+**Pattern 1: Fetch a single media item by path in a controller**
+
+If you store a media path like `/uploads/media/photo-abc123.webp` in a block's `props_json`, you can query the database for the matching record:
+
+```php
+$mediaRepo = new \App\Repositories\MediaRepository();
+$media = $mediaRepo->findByStoredName('photo-abc123.webp');
+// or search by path using searchWithFilters(['q' => 'photo-abc123'])
+```
+
+**Pattern 2: Embed media metadata in `props_json` at authoring time**
+
+The safer, zero-query approach is to store all needed copyright fields in the block JSON at the time of authoring. In the page block editor, construct `props_json` manually:
+
+```json
+{
+  "hero_image":       "/uploads/media/beach-scene-abc123.webp",
+  "image_alt":        "Sunrise over the beach",
+  "copyright_author": "Jane Smith",
+  "license_name":     "CC BY 4.0",
+  "license_url":      "https://creativecommons.org/licenses/by/4.0/",
+  "attribution_required": true
+}
+```
+
+Then reference these in the block's HTML template:
+
+```html
+<figure class="media-figure">
+  <img src="{{ hero_image }}" alt="{{ image_alt }}">
+  <figcaption class="attribution">
+    Photo by {{ copyright_author }}
+    — <a href="{{ license_url }}">{{ license_name }}</a>
+  </figcaption>
+</figure>
+```
+
+**Pattern 3: Load and pass media to a custom controller action**
+
+For a custom page or collection query that needs to render files with their attribution data:
+
+```php
+use App\Repositories\MediaRepository;
+
+class GalleryController extends \App\Core\Controller
+{
+    private MediaRepository $mediaRepo;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->mediaRepo = new MediaRepository();
+    }
+
+    public function index(): void
+    {
+        $images = $this->mediaRepo->searchWithFilters([
+            'type'   => 'image',
+            'tag_id' => 7, // e.g. "gallery" tag id
+        ]);
+
+        $images = $this->mediaRepo->attachTagsToMediaList($images);
+
+        $this->render('pages/gallery', ['images' => $images]);
+    }
+}
+```
+
+In `app/Views/pages/gallery.php`:
+
+```php
+<?php foreach ($images as $image): ?>
+  <figure>
+    <img src="<?= htmlspecialchars($image->path) ?>"
+         alt="<?= htmlspecialchars((string) $image->alt_text) ?>">
+    <?php if ($image->attribution_required): ?>
+      <figcaption>
+        <?php if ($image->copyright_text): ?>
+          <?= htmlspecialchars($image->copyright_text) ?>
+        <?php elseif ($image->copyright_author): ?>
+          &copy; <?= htmlspecialchars($image->copyright_author) ?>
+        <?php endif ?>
+        <?php if ($image->license_name): ?>
+          &mdash;
+          <?php if ($image->license_url): ?>
+            <a href="<?= htmlspecialchars($image->license_url) ?>"
+               rel="license noopener"><?= htmlspecialchars($image->license_name) ?></a>
+          <?php else: ?>
+            <?= htmlspecialchars($image->license_name) ?>
+          <?php endif ?>
+        <?php endif ?>
+        <?php if ($image->source_url): ?>
+          — <a href="<?= htmlspecialchars($image->source_url) ?>"
+               rel="noopener">Source</a>
+        <?php endif ?>
+      </figcaption>
+    <?php endif ?>
+  </figure>
+<?php endforeach ?>
+```
+
+**Pattern 4: Render all tags on a media item**
+
+After calling `attachTagsToMediaList()` or `findWithTags()`, tags are available as an array of `MediaTag` objects on `$media->tags`:
+
+```php
+foreach ($image->tags as $tag) {
+    echo htmlspecialchars($tag->name);
+}
+```
+
+Each `MediaTag` has `id`, `name`, and `slug` properties.
 
 ### Folder hierarchy safety
 
 Folder operations enforce:
 
-- no self-parent assignment
-- no cyclical hierarchy (cannot move under descendant)
-- delete blocked when child folders exist
-- delete blocked when folder still contains media
+- No self-parent assignment
+- No cyclical hierarchy (cannot move a folder under its own descendant)
+- Delete blocked when child folders exist
+- Delete blocked when folder still contains media items
 
 ### Helper panels for JSON fields
 
-Page block and collection entry forms load media helper context from repositories and expose:
+Page block and collection entry edit screens load media helper context via `buildMediaHelperContext()` in the respective admin controllers. This method reads `media_q`, `media_folder_id`, and `media_tag_id` from GET parameters, runs `searchWithFilters()`, batch-loads tags, and returns:
 
-- folder filter
-- file path
-- filename
-- media type
-- copyable JSON snippets
+```php
+[
+    'mediaFolders'          => [...],  // all folders (tree list)
+    'mediaTags'             => [...],  // all tags
+    'mediaItems'            => [...],  // filtered Media objects with ->tags
+    'selectedMediaFolderId' => ?int,
+    'selectedMediaTagId'    => ?int,
+    'mediaSearchQuery'      => string,
+]
+```
 
-This keeps media reusable in `props_json` and `data_json` without changing the block or collection schema model.
+The Insert Path and Insert Snippet buttons in the helper write values into the active `props_json` / `bindings_json` (page blocks) or `data_json` (collection entries) textarea at the cursor position using vanilla JavaScript.
 
 ### Adding a new admin section
 

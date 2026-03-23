@@ -8,6 +8,7 @@ use App\Models\PageBlock;
 use App\Repositories\BlockTypeRepository;
 use App\Repositories\MediaFolderRepository;
 use App\Repositories\MediaRepository;
+use App\Repositories\MediaTagRepository;
 use App\Repositories\PageBlockRepository;
 use App\Repositories\PageRepository;
 
@@ -18,6 +19,7 @@ class PageAdminController extends Controller
     private BlockTypeRepository $blockTypeRepository;
     private MediaRepository $mediaRepository;
     private MediaFolderRepository $mediaFolderRepository;
+    private MediaTagRepository $mediaTagRepository;
 
     public function __construct(\App\Core\Request $request, \App\Core\Response $response)
     {
@@ -27,6 +29,7 @@ class PageAdminController extends Controller
         $this->blockTypeRepository = new BlockTypeRepository();
         $this->mediaRepository = new MediaRepository();
         $this->mediaFolderRepository = new MediaFolderRepository();
+        $this->mediaTagRepository = new MediaTagRepository();
     }
 
     public function index(): void
@@ -357,9 +360,7 @@ class PageAdminController extends Controller
             $blockTypeMap[(int) $blockType->id] = $blockType;
         }
 
-        $selectedMediaFolderId = $this->resolveMediaFolderIdFromQuery();
-        $mediaFolders = $this->mediaFolderRepository->getTreeList();
-        $mediaItems = $this->mediaRepository->allForHelper($selectedMediaFolderId, 100);
+        $mediaHelperContext = $this->buildMediaHelperContext();
 
         $this->render('admin/pages/edit', [
             'pageTitle' => 'Edit Page',
@@ -371,9 +372,7 @@ class PageAdminController extends Controller
             'blockTypes' => $blockTypes,
             'blockTypeMap' => $blockTypeMap,
             'blockErrors' => $blockErrors,
-            'mediaFolders' => $mediaFolders,
-            'mediaItems' => $mediaItems,
-            'selectedMediaFolderId' => $selectedMediaFolderId,
+            ...$mediaHelperContext,
             'newBlockForm' => $newBlockForm !== [] ? $newBlockForm : [
                 'block_type_id' => '',
                 'sort_order' => (string) ($this->pageBlockRepository->getMaxSortOrderForPage((int) $page->id) + 1),
@@ -409,18 +408,42 @@ class PageAdminController extends Controller
         return null;
     }
 
-    private function resolveMediaFolderIdFromQuery(): ?int
+    private function buildMediaHelperContext(): array
     {
-        $raw = trim((string) $this->request->getQuery('media_folder_id', ''));
-        if ($raw === '' || !ctype_digit($raw)) {
-            return null;
+        $q = trim((string) $this->request->getQuery('media_q', ''));
+
+        $folderRaw = trim((string) $this->request->getQuery('media_folder_id', ''));
+        $folderId = null;
+        if ($folderRaw !== '' && ctype_digit($folderRaw)) {
+            $candidate = (int) $folderRaw;
+            if ($candidate > 0 && $this->mediaFolderRepository->find($candidate) !== null) {
+                $folderId = $candidate;
+            }
         }
 
-        $id = (int) $raw;
-        if ($id <= 0 || $this->mediaFolderRepository->find($id) === null) {
-            return null;
+        $tagRaw = trim((string) $this->request->getQuery('media_tag_id', ''));
+        $tagId = null;
+        if ($tagRaw !== '' && ctype_digit($tagRaw)) {
+            $candidate = (int) $tagRaw;
+            if ($candidate > 0 && $this->mediaTagRepository->find($candidate) !== null) {
+                $tagId = $candidate;
+            }
         }
 
-        return $id;
+        $mediaItems = $this->mediaRepository->searchWithFilters([
+            'q' => $q,
+            'folder_id' => $folderId,
+            'tag_id' => $tagId,
+            'type' => '',
+        ]);
+
+        return [
+            'mediaFolders' => $this->mediaFolderRepository->getTreeList(),
+            'mediaTags' => $this->mediaTagRepository->all(),
+            'mediaItems' => $this->mediaRepository->attachTagsToMediaList($mediaItems),
+            'selectedMediaFolderId' => $folderId,
+            'selectedMediaTagId' => $tagId,
+            'mediaSearchQuery' => $q,
+        ];
     }
 }

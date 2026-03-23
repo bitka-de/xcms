@@ -16,6 +16,10 @@ A lightweight, flat-file-inspired CMS built on PHP and SQLite. No external frame
 - **SQLite database** — zero-config, file-based storage in `storage/database.sqlite`
 - **Idempotent migrations** — safe to re-run `setup.php` on any existing installation
 - **Demo seeds** — pre-built hero block, text block, homepage, and blog collection
+- **Media library** — upload and manage images, videos, and documents with folder hierarchy
+- **Media tags** — label and filter media items with a free-form tagging system; tags are auto-created on use
+- **Copyright & license metadata** — record copyright holder, license name and URL, source URL, attribution requirement, and usage notes per file
+- **Media search** — filter the media library and inline helper panels by keyword, folder, tag, and file type
 
 ---
 

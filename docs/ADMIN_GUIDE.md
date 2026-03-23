@@ -17,6 +17,7 @@ The sidebar contains links to all admin sections:
 | Media | `/admin/media` |
 | Media Folders | `/admin/media/folders` |
 | Design Settings | `/admin/design` |
+| Media Tags | managed via Media edit form |
 
 ---
 
@@ -196,7 +197,28 @@ Blocks are rendered in ascending `sort_order` value. Use multiples of 10 (10, 20
 
 ### Using media in block JSON
 
-The page edit screen includes a **Media Helper** panel. You can filter media by folder and copy either a direct media path or a ready-to-paste JSON snippet into `props_json`.
+The page edit screen includes a **Media Helper** panel. Use it to find media and insert references directly into a block's `props_json` or `bindings_json` without leaving the page editor.
+
+**Filtering the helper**
+
+The helper has three filter controls:
+
+| Control | Behavior |
+|---|---|
+| **Search** | Text search across filename, title, alt text, copyright fields, and tag names |
+| **Folder** | Restrict to a specific folder |
+| **Tag** | Restrict to items with a specific tag |
+
+Click **Filter** to apply. Click **Reset** to clear. The filter reloads the page with query parameters — the block forms are not affected.
+
+**Inserting a value**
+
+Each row in the helper result table has two buttons:
+
+- **Insert Path** — inserts the file's public path string at the cursor position in whichever `props_json` or `bindings_json` textarea was last focused
+- **Insert Snippet** — inserts a JSON object `{"media":{"path":"…","filename":"…","type":"…"}}` at the cursor position
+
+Click inside a textarea to make it the active target, then click Insert Path or Insert Snippet on any media row. The value is inserted at the caret position without replacing other content.
 
 Use paths like:
 
@@ -230,14 +252,31 @@ The media library stores uploaded files in `public/uploads/media/` and keeps met
 - **Videos:** `mp4`, `webm`, `mov`
 - **Documents:** `pdf`
 
+### Searching and filtering media
+
+The media library list (`/admin/media`) includes a filter bar with four controls:
+
+| Control | Behavior |
+|---|---|
+| **Search** | Full-text match across filename, original name, title, alt text, MIME type, copyright text, copyright author, license name, source URL, and tag names |
+| **Folder** | Restrict results to a specific folder |
+| **Tag** | Restrict results to items that have a specific tag assigned |
+| **Type** | Filter by file type: Image, Video, or Document |
+
+All filters combine with AND logic. Click **Apply Filters** to apply. Click **Reset** to clear all filters and return to the full list.
+
 ### What the media list shows
 
+Each card in the grid displays:
+
 - Preview (image thumbnail, video preview, or PDF badge)
+- File type label (Image / Video / Document)
 - Display filename
-- MIME type and extension
-- File size
+- MIME type, extension, and file size
 - Folder name
 - Public path for reuse in JSON data
+- Tags assigned to the item
+- Rights summary: copyright author and license name when present
 
 ### Uploading media
 
@@ -248,19 +287,41 @@ Go to `/admin/media/upload` and provide:
 3. Optional display filename
 4. Optional title and alt text
 
-Upload security includes extension + MIME validation, max-size validation, server-side safe storage naming, and path traversal protection.
+Upload security includes extension + MIME validation, max-size enforcement, server-side safe storage naming, and path traversal protection.
 
 ### Editing media metadata
 
-Go to `/admin/media/edit?id=<id>` to edit:
+Go to `/admin/media/edit?id=<id>` to edit all metadata fields:
 
-- Folder assignment
-- Display filename
-- Title
-- Alt text
-- Optional physical file rename (safe server-side rename)
+**Basic fields**
 
-By default, editing display filename does **not** change the physical path. Physical rename is an explicit opt-in checkbox.
+| Field | Description |
+|---|---|
+| Folder | Assign or move to a folder |
+| Display filename | Editable name shown in the admin |
+| Title | Optional title for the asset |
+| Alt text | Image alt attribute for accessibility and SEO |
+| Rename physical file | Checkbox — opt-in to rename the server-side file and update its public path |
+
+**Tags**
+
+Enter a comma-separated list of tag names in the Tags field. Tags are matched case-insensitively. New tags are created automatically when you save — you do not need to pre-create them. Removing a tag name from the field removes the assignment; if no other media uses that tag, the tag record is kept (it is not deleted automatically).
+
+**Copyright and license**
+
+| Field | Description |
+|---|---|
+| Copyright text | Full copyright statement, e.g. `© 2024 Jane Smith` |
+| Copyright author | Author or rights holder name |
+| License name | License identifier, e.g. `CC BY 4.0`, `All rights reserved` |
+| License URL | URL to the full license text |
+| Source URL | URL to the original source of the file |
+| Attribution required | Check this box if the license requires crediting the author when using the file |
+| Usage notes | Free-form notes about allowed uses, restrictions, or internal context |
+
+These fields are for internal documentation and editorial reference. They are stored in SQLite and can be read in custom PHP templates or frontend rendering code — see the [Developer Guide](DEVELOPER_GUIDE.md) for examples.
+
+By default, editing the display filename does **not** change the physical path. Physical rename is an explicit opt-in checkbox.
 
 ### Deleting media
 
@@ -291,7 +352,34 @@ Media folders support nested hierarchies with optional parent folder references.
 - Folder deletion is blocked if child folders exist
 - Folder deletion is blocked if media items are still assigned
 
-Use folder filtering in media list and helper panels to quickly find reusable media paths.
+Use folder, tag, and search filtering in the media list and helper panels to quickly find and reuse media paths.
+
+---
+
+## Media Tags
+
+Media tags are a free-form labeling system. There is no dedicated tag management page — tags are created implicitly when you assign them to a media item on the edit form.
+
+### Assigning tags
+
+Open any media item's edit form. In the **Tags** field, enter a comma-separated list of tag names:
+
+```
+hero images, product shots, licensed
+```
+
+Save the form. Each tag is matched case-insensitively against existing tags. New tags are created automatically with a URL-safe slug generated from the name. Existing tags are reused — assigning `Hero Images` to another file will match the existing `hero images` tag.
+
+### Removing tags
+
+Edit the media item and remove the tag name from the Tags field. Save the form. The assignment is deleted. The tag record itself is not deleted — it remains available for use on other files.
+
+### Using tags to filter
+
+Once tags are assigned, they appear as filter options in:
+
+- The media library list (`/admin/media` — **Tag** dropdown)
+- The inline media helper on page block editing and collection entry editing
 
 ---
 
@@ -368,7 +456,11 @@ On the collection edit page, click **Delete** in the entry table row. The entry 
 
 ### Using media in collection entry JSON
 
-Collection entry create/edit screens include the same folder-filterable **Media Helper** panel used on page edit. Copy the media path or snippet directly into `data_json`.
+Collection entry create and edit screens include the same **Media Helper** panel used in page block editing. It supports the same search, folder, and tag filters.
+
+Because the collection entry form is a POST form, the media helper filter does not use a nested HTML form — instead it uses a JavaScript redirect. Click **Filter** to apply the current filter values. The page reloads with the new filter, and the `data_json` field content is preserved in the browser's form state.
+
+**Inserting a value** — click inside the `data_json` textarea to set the caret position, then click **Insert Path** or **Insert Snippet** on any media row. The value is inserted at the caret.
 
 ---
 
