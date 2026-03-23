@@ -1,19 +1,4 @@
 <?php
-$formatSize = static function (int $bytes): string {
-    if ($bytes <= 0) {
-        return '0 B';
-    }
-
-    $units = ['B', 'KB', 'MB', 'GB'];
-    $size = (float) $bytes;
-    $unitIndex = 0;
-    while ($size >= 1024 && $unitIndex < count($units) - 1) {
-        $size /= 1024;
-        $unitIndex++;
-    }
-
-    return number_format($size, $unitIndex === 0 ? 0 : 1) . ' ' . $units[$unitIndex];
-};
 
 $selectedFolderId = (int) ($selectedFolderId ?? 0);
 $selectedTagId    = (int) ($selectedTagId ?? 0);
@@ -23,10 +8,11 @@ $hasFilters       = $searchQuery !== '' || $selectedFolderId > 0 || $selectedTag
 $itemCount        = count($mediaItems);
 
 $quotaService = new \App\Services\StorageQuotaService(new \App\Repositories\MediaRepository());
-$usedStorageBytes = $quotaService->getUsedStorageBytes();
-$maxStorageBytes = $quotaService->getMaxTotalStorageBytes();
-$remainingStorageBytes = max(0, $maxStorageBytes - $usedStorageBytes);
-$quotaUsedPercent = $maxStorageBytes > 0 ? min(100, max(0, ($usedStorageBytes / $maxStorageBytes) * 100)) : 0;
+$usage = $quotaService->getUsageSummary();
+$usedStorageBytes = (int) $usage['used_bytes'];
+$maxStorageBytes = (int) $usage['total_bytes'];
+$remainingStorageBytes = (int) $usage['remaining_bytes'];
+$quotaUsedPercent = (float) $usage['used_percent'];
 $canUpload = $remainingStorageBytes > 0;
 ?>
 
@@ -48,9 +34,9 @@ $canUpload = $remainingStorageBytes > 0;
             <span class="media-quota-state <?= $canUpload ? 'is-ok' : 'is-full' ?>"><?= $canUpload ? 'Uploads available' : 'Storage full' ?></span>
         </div>
         <div class="media-quota-stats">
-            <p><strong><?= htmlspecialchars($formatSize($usedStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>used</span></p>
-            <p><strong><?= htmlspecialchars($formatSize($remainingStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>remaining</span></p>
-            <p><strong><?= htmlspecialchars($formatSize($maxStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>total</span></p>
+            <p><strong><?= htmlspecialchars((string) $usage['used_formatted'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>used</span></p>
+            <p><strong><?= htmlspecialchars((string) $usage['remaining_formatted'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>remaining</span></p>
+            <p><strong><?= htmlspecialchars((string) $usage['total_formatted'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong><span>total</span></p>
         </div>
         <div class="media-quota-bar" role="progressbar" aria-label="Storage used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) round($quotaUsedPercent) ?>">
             <span class="media-quota-fill" style="width: <?= number_format($quotaUsedPercent, 2, '.', '') ?>%"></span>
@@ -255,7 +241,7 @@ $canUpload = $remainingStorageBytes > 0;
                         </div>
 
                         <p class="media-manager-meta">
-                            <?= htmlspecialchars($formatSize($fileSize), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
+                            <?= htmlspecialchars($quotaService->formatBytes($fileSize), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
                             <?php if ($mimeType !== ''): ?>
                                 · <?= htmlspecialchars($mimeType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
                             <?php endif; ?>

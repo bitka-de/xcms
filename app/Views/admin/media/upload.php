@@ -1,27 +1,11 @@
 <?php
 $quotaService = new \App\Services\StorageQuotaService(new \App\Repositories\MediaRepository());
-$usedStorageBytes = $quotaService->getUsedStorageBytes();
-$maxStorageBytes = $quotaService->getMaxTotalStorageBytes();
-$remainingStorageBytes = max(0, $maxStorageBytes - $usedStorageBytes);
-$usedPercent = $maxStorageBytes > 0 ? min(100, max(0, ($usedStorageBytes / $maxStorageBytes) * 100)) : 0;
+$usage = $quotaService->getUsageSummary();
+$usedStorageBytes = (int) $usage['used_bytes'];
+$maxStorageBytes = (int) $usage['total_bytes'];
+$remainingStorageBytes = (int) $usage['remaining_bytes'];
+$usedPercent = (float) $usage['used_percent'];
 $canUpload = $remainingStorageBytes > 0;
-
-$formatBytes = static function (int $bytes): string {
-    if ($bytes <= 0) {
-        return '0 B';
-    }
-
-    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    $size = (float) $bytes;
-    $unit = 0;
-    while ($size >= 1024 && $unit < count($units) - 1) {
-        $size /= 1024;
-        $unit++;
-    }
-
-    $precision = $unit >= 3 ? 2 : 1;
-    return number_format($size, $precision, '.', ',') . ' ' . $units[$unit];
-};
 ?>
 <section class="admin-page-header">
     <h2>Upload Media</h2>
@@ -31,9 +15,9 @@ $formatBytes = static function (int $bytes): string {
 <section class="admin-grid media-upload-layout" data-media-upload-root>
     <aside class="stat-card media-upload-summary" aria-label="Storage usage summary">
         <h3>Storage Usage</h3>
-        <p class="media-upload-quota-line"><strong data-storage-used><?= htmlspecialchars($formatBytes($usedStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong> used</p>
-        <p class="media-upload-quota-line"><strong data-storage-remaining><?= htmlspecialchars($formatBytes($remainingStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong> remaining</p>
-        <p class="media-upload-quota-total">of <?= htmlspecialchars($formatBytes($maxStorageBytes), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> total</p>
+        <p class="media-upload-quota-line"><strong data-storage-used><?= htmlspecialchars((string) $usage['used_formatted'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong> used</p>
+        <p class="media-upload-quota-line"><strong data-storage-remaining><?= htmlspecialchars((string) $usage['remaining_formatted'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong> remaining</p>
+        <p class="media-upload-quota-total">of <?= htmlspecialchars((string) $usage['total_formatted'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> total</p>
         <div class="media-upload-quota-bar" role="progressbar" aria-label="Storage used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= (int) round($usedPercent) ?>">
             <span class="media-upload-quota-fill" style="width: <?= number_format($usedPercent, 2, '.', '') ?>%"></span>
         </div>
