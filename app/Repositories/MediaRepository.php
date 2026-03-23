@@ -288,6 +288,8 @@ class MediaRepository extends BaseRepository
             }
             throw $exception;
         }
+
+        $tagRepository->deleteOrphans();
     }
 
     public function attachTagsToMedia(Media $media): Media

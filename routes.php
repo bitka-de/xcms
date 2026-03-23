@@ -52,6 +52,7 @@ return [
     '/admin/media/folders' => ['controller' => 'Admin\MediaAdminController', 'action' => 'folders'],
     '/admin/media/folders/create' => ['controller' => 'Admin\MediaAdminController', 'action' => 'createFolder'],
     '/admin/media/folders/edit' => ['controller' => 'Admin\MediaAdminController', 'action' => 'editFolder'],
+    '/admin/media/folders/reorder' => ['controller' => 'Admin\MediaAdminController', 'action' => 'reorderFolders'],
     '/admin/media/folders/delete' => ['controller' => 'Admin\MediaAdminController', 'action' => 'deleteFolder'],
 
     // Backward-compatible media edit route

@@ -8,6 +8,7 @@ class MediaFolder
     public string $name = '';
     public string $slug = '';
     public ?int $parent_id = null;
+    public int $sort_order = 0;
     public ?string $parent_name = null;
     public ?string $created_at = null;
     public ?string $updated_at = null;
@@ -35,6 +36,7 @@ class MediaFolder
             'name' => $this->name,
             'slug' => $this->slug,
             'parent_id' => $this->parent_id,
+            'sort_order' => $this->sort_order,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

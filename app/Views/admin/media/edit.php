@@ -106,20 +106,28 @@ foreach (($media->tags ?? []) as $tag) {
                         <?php if (!empty($errors['folder_id'])): ?><small class="field-error"><?= htmlspecialchars((string) $errors['folder_id'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
                     </label>
 
-                    <label>
+<?php
+    $availableTagNamesJson = json_encode(
+        array_map(fn($t) => $t->name, $availableTags ?? []),
+        JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT
+    );
+    $initialTagsJson = json_encode(
+        array_values(array_filter(array_map('trim', explode(',', (string) ($form['tags'] ?? ''))))),
+        JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT
+    );
+?>
+                    <div class="tag-chip-field">
                         Tags
-                        <input type="text" name="tags" value="<?= htmlspecialchars((string) ($form['tags'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" placeholder="hero, brand, homepage">
-                        <small class="media-edit-inline-help">Comma-separated. Auto-created, duplicates removed on save.</small>
-                    </label>
+                        <div class="tag-chip-input" id="tag-chip-input">
+                            <input type="text" id="tag-chip-text" class="tag-chip-text" placeholder="Tag hinzufügen…" autocomplete="off" aria-label="Tag hinzufügen" aria-autocomplete="list" aria-controls="tag-chip-suggestions">
+                            <ul class="tag-chip-suggestions" id="tag-chip-suggestions" role="listbox" hidden></ul>
+                        </div>
+                        <input type="hidden" name="tags" id="tags-value">
+                        <?php if (!empty($errors['tags'])): ?><small class="field-error"><?= htmlspecialchars((string) $errors['tags'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small><?php endif; ?>
+                        <small class="media-edit-inline-help">Maximal 3 Tags · Enter oder Komma zum Hinzufügen · Backspace zum Entfernen.</small>
+                    </div>
                 </div>
 
-                <?php if ($currentTagNames !== []): ?>
-                    <div class="media-edit-tag-list" aria-label="Current tags">
-                        <?php foreach ($currentTagNames as $tagName): ?>
-                            <span><?= htmlspecialchars($tagName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></span>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
             </section>
 
             <!-- Metadata -->
@@ -218,3 +226,175 @@ foreach (($media->tags ?? []) as $tag) {
         </form>
     </div>
 </section>
+
+<script>
+(function () {
+    'use strict';
+    const allSuggestions = Array.isArray(<?= $availableTagNamesJson ?>) ? <?= $availableTagNamesJson ?> : [];
+    const initialTags    = Array.isArray(<?= $initialTagsJson ?>) ? <?= $initialTagsJson ?> : [];
+
+    const wrapper     = document.getElementById('tag-chip-input');
+    const textInput   = document.getElementById('tag-chip-text');
+    const suggestList = document.getElementById('tag-chip-suggestions');
+    const hiddenInput = document.getElementById('tags-value');
+
+    const MAX_TAGS = 3;
+    let tags = initialTags.map(function (t) {
+        return String(t || '').trim();
+    }).filter(Boolean);
+    let activeIdx = -1;
+
+    function normalizeTag(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function hasTag(value) {
+        const needle = normalizeTag(value);
+        if (!needle) {
+            return false;
+        }
+
+        return tags.some(function (tag) {
+            return normalizeTag(tag) === needle;
+        });
+    }
+
+    function dedupeTags(values) {
+        const seen = new Set();
+        const unique = [];
+
+        values.forEach(function (value) {
+            const clean = String(value || '').trim();
+            if (!clean) {
+                return;
+            }
+
+            const key = normalizeTag(clean);
+            if (seen.has(key)) {
+                return;
+            }
+
+            seen.add(key);
+            unique.push(clean);
+        });
+
+        return unique;
+    }
+
+    function syncHidden() {
+        hiddenInput.value = tags.join(', ');
+    }
+
+    function renderChips() {
+        wrapper.querySelectorAll('.tag-chip-item').forEach(el => el.remove());
+        tags.forEach(tag => {
+            const chip  = document.createElement('span');
+            chip.className = 'tag-chip-item';
+            chip.dataset.tag = tag;
+
+            const label = document.createElement('span');
+            label.textContent = tag;
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'tag-chip-remove';
+            btn.setAttribute('aria-label', 'Tag entfernen: ' + tag);
+            btn.textContent = '×';
+            btn.addEventListener('click', function (e) { e.stopPropagation(); removeTag(tag); });
+
+            chip.append(label, btn);
+            wrapper.insertBefore(chip, textInput);
+        });
+        syncHidden();
+    }
+
+    function addTag(raw) {
+        const name = String(raw || '').trim();
+        if (!name || hasTag(name)) { textInput.value = ''; return; }
+        if (tags.length >= MAX_TAGS) { textInput.value = ''; hideSuggestions(); return; }
+        tags.push(name);
+        tags = dedupeTags(tags).slice(0, MAX_TAGS);
+        renderChips();
+        textInput.value = '';
+        hideSuggestions();
+    }
+
+    function removeTag(name) {
+        tags = tags.filter(function (t) { return t !== name; });
+        renderChips();
+    }
+
+    function showSuggestions(query) {
+        if (tags.length >= MAX_TAGS) { hideSuggestions(); return; }
+        const q = query.toLowerCase().trim();
+        if (!q) { hideSuggestions(); return; }
+        const matches = allSuggestions
+            .filter(function (s) { return String(s).toLowerCase().includes(q) && !hasTag(s); })
+            .slice(0, 10);
+        if (!matches.length) { hideSuggestions(); return; }
+
+        suggestList.innerHTML = '';
+        activeIdx = -1;
+        matches.forEach(function (s) {
+            const li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.textContent = s;
+            li.addEventListener('mousedown', function (e) { e.preventDefault(); addTag(s); });
+            suggestList.appendChild(li);
+        });
+        suggestList.hidden = false;
+    }
+
+    function hideSuggestions() {
+        suggestList.hidden = true;
+        suggestList.innerHTML = '';
+        activeIdx = -1;
+    }
+
+    function updateActive() {
+        const items = suggestList.querySelectorAll('li');
+        items.forEach(function (li, i) { li.classList.toggle('is-active', i === activeIdx); });
+    }
+
+    textInput.addEventListener('input', function () { showSuggestions(textInput.value); });
+
+    textInput.addEventListener('keydown', function (e) {
+        const items = Array.from(suggestList.querySelectorAll('li'));
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            activeIdx = Math.min(activeIdx + 1, items.length - 1);
+            updateActive();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            activeIdx = Math.max(activeIdx - 1, -1);
+            updateActive();
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (activeIdx >= 0 && items[activeIdx]) {
+                addTag(items[activeIdx].textContent);
+            } else {
+                addTag(textInput.value);
+            }
+        } else if (e.key === ',') {
+            e.preventDefault();
+            addTag(textInput.value);
+        } else if (e.key === 'Escape') {
+            hideSuggestions();
+        } else if (e.key === 'Backspace' && textInput.value === '' && tags.length > 0) {
+            removeTag(tags[tags.length - 1]);
+        }
+    });
+
+    textInput.addEventListener('blur', function () {
+        setTimeout(function () {
+            if (textInput.value.trim()) addTag(textInput.value);
+            hideSuggestions();
+        }, 150);
+    });
+
+    wrapper.addEventListener('click', function () { textInput.focus(); });
+
+    tags = dedupeTags(tags).slice(0, MAX_TAGS);
+    renderChips();
+}());
+</script>

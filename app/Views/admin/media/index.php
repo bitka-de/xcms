@@ -481,11 +481,12 @@ if ($selectedType !== '') {
                 var cardType = normalize(card.getAttribute('data-media-type'));
                 var cardFolder = normalize(card.getAttribute('data-folder-id'));
                 var cardTags = normalize(card.getAttribute('data-tag-ids'));
+                var cardTagIds = cardTags === '' ? [] : cardTags.split(/\s+/);
                 var cardSearch = normalize(card.getAttribute('data-search-text'));
 
                 var matchesSearch = !useSearchQuery || cardSearch.indexOf(q) !== -1;
                 var matchesFolder = folder === '' || cardFolder === folder;
-                var matchesTag = tag === '' || cardTags.indexOf(' ' + tag + ' ') !== -1;
+                var matchesTag = tag === '' || cardTagIds.indexOf(tag) !== -1;
                 var matchesType = type === '' || cardType === type;
 
                 var visible = matchesSearch && matchesFolder && matchesTag && matchesType;

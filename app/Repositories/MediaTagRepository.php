@@ -15,6 +15,40 @@ class MediaTagRepository extends BaseRepository
         return $this->hydrateAll($stmt->fetchAll(\PDO::FETCH_ASSOC));
     }
 
+    public function allInUse(): array
+    {
+        $stmt = $this->db->query(
+            "SELECT DISTINCT t.* FROM {$this->table} t
+             INNER JOIN media_tag_assignments a ON a.tag_id = t.id
+             INNER JOIN media m ON m.id = a.media_id
+             ORDER BY t.name ASC"
+        );
+        return $this->hydrateAll($stmt->fetchAll(\PDO::FETCH_ASSOC));
+    }
+
+    public function deleteOrphans(): int
+    {
+        // Remove stale assignments whose media row no longer exists (e.g. after a delete without cascading FK)
+        $this->db->exec(
+            'DELETE FROM media_tag_assignments WHERE media_id NOT IN (SELECT id FROM media)'
+        );
+
+        // Remove stale assignments whose tag row no longer exists.
+        $this->db->exec(
+            'DELETE FROM media_tag_assignments WHERE tag_id NOT IN (SELECT id FROM media_tags)'
+        );
+
+        $stmt = $this->db->query(
+            "DELETE FROM {$this->table}
+             WHERE NOT EXISTS (
+                 SELECT 1
+                 FROM media_tag_assignments a
+                 WHERE a.tag_id = {$this->table}.id
+             )"
+        );
+        return (int) $stmt->rowCount();
+    }
+
     public function findByName(string $name): ?MediaTag
     {
         $stmt = $this->db->prepare("SELECT * FROM {$this->table} WHERE LOWER(name) = LOWER(?) LIMIT 1");

@@ -37,12 +37,14 @@ class MediaAdminController extends Controller
 
     public function index(): void
     {
+        $this->mediaTagRepository->deleteOrphans();
+
         $filters = $this->resolveListFiltersFromQuery();
         $mediaItems = $this->mediaRepository->searchWithFilters($filters);
         $mediaItems = $this->mediaRepository->attachTagsToMediaList($mediaItems);
         $folderTree = $this->mediaFolderRepository->getTreeList();
         $folderMap = $this->mediaFolderRepository->getIdNameMap();
-        $availableTags = $this->mediaTagRepository->all();
+        $availableTags = $this->mediaTagRepository->allInUse();
 
         $this->render('admin/media/index', [
             'pageTitle' => 'Media Library',
@@ -374,6 +376,7 @@ class MediaAdminController extends Controller
                     'media' => $media,
                     'form' => $form,
                     'folderTree' => $this->mediaFolderRepository->getTreeList(),
+                    'availableTags' => $this->mediaTagRepository->allInUse(),
                     'errors' => $errors,
                     'flash' => [
                         'type' => 'error',
@@ -432,6 +435,7 @@ class MediaAdminController extends Controller
                 'rename_physical' => false,
             ],
             'folderTree' => $this->mediaFolderRepository->getTreeList(),
+            'availableTags' => $this->mediaTagRepository->allInUse(),
             'errors' => [],
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
@@ -466,12 +470,42 @@ class MediaAdminController extends Controller
 
     public function folders(): void
     {
+        $selectedFolderId = (int) $this->request->getQuery('folder_id', 0);
+        $selectedFolder = null;
+        $selectedFolderMedia = [];
+        $selectedParentId = null;
+        $selectedParentName = '';
+
+        if ($selectedFolderId > 0) {
+            $selectedFolder = $this->mediaFolderRepository->find($selectedFolderId);
+            if ($selectedFolder === null) {
+                $this->redirect('/admin/media/folders?error=Folder+not+found');
+                return;
+            }
+
+            $selectedFolderMedia = $this->mediaRepository->allByFolder($selectedFolderId, true);
+
+            if ($selectedFolder->parent_id !== null) {
+                $selectedParentId = (int) $selectedFolder->parent_id;
+                $parent = $this->mediaFolderRepository->find($selectedParentId);
+                $selectedParentName = $parent !== null ? (string) $parent->name : '';
+            }
+        }
+
+        $currentParentId = $selectedFolderId > 0 ? $selectedFolderId : null;
+
         $this->render('admin/media/folders', [
             'pageTitle' => 'Media Folders',
             'folders' => $this->mediaFolderRepository->allWithParents(),
+            'explorerFolders' => $this->mediaFolderRepository->allByParent($currentParentId),
             'folderTree' => $this->mediaFolderRepository->getTreeList(),
             'mediaCountByFolder' => $this->mediaFolderRepository->mediaCountByFolder(),
             'childCountByFolder' => $this->mediaFolderRepository->childCountByFolder(),
+            'selectedFolderId' => $selectedFolderId,
+            'selectedFolderName' => $selectedFolder !== null ? (string) $selectedFolder->name : '',
+            'selectedParentId' => $selectedParentId,
+            'selectedParentName' => $selectedParentName,
+            'selectedFolderMedia' => $selectedFolderMedia,
             'flash' => $this->readFlashFromQuery(),
         ], 'admin');
     }
@@ -501,10 +535,73 @@ class MediaAdminController extends Controller
             'name' => $name,
             'slug' => $slug,
             'parent_id' => $parentId,
+            'sort_order' => $this->mediaFolderRepository->getNextSortOrderForParent($parentId),
         ]);
 
         $this->mediaFolderRepository->save($folder);
         $this->redirect('/admin/media/folders?success=Folder+created');
+    }
+
+    public function reorderFolders(): void
+    {
+        if (!$this->request->isPost()) {
+            $this->redirect('/admin/media/folders');
+            return;
+        }
+
+        $parentId = $this->normalizeFolderId((string) $this->request->getPost('parent_id', ''));
+        if ($parentId !== null && $this->mediaFolderRepository->find($parentId) === null) {
+            $this->redirect('/admin/media/folders?error=Folder+not+found');
+            return;
+        }
+
+        $scopeQuery = $parentId !== null ? '&folder_id=' . $parentId : '';
+
+        $rawOrder = trim((string) $this->request->getPost('order_ids', ''));
+        if ($rawOrder === '') {
+            $this->redirect('/admin/media/folders?error=Invalid+folder+order' . $scopeQuery);
+            return;
+        }
+
+        $orderedIds = [];
+        foreach (explode(',', $rawOrder) as $rawId) {
+            $rawId = trim($rawId);
+            if ($rawId === '' || !ctype_digit($rawId)) {
+                continue;
+            }
+
+            $id = (int) $rawId;
+            if ($id > 0) {
+                $orderedIds[] = $id;
+            }
+        }
+
+        $orderedIds = array_values(array_unique($orderedIds));
+        if ($orderedIds === []) {
+            $this->redirect('/admin/media/folders?error=Invalid+folder+order' . $scopeQuery);
+            return;
+        }
+
+        $siblingFolderIds = array_map(
+            static fn (MediaFolder $folder): int => (int) $folder->id,
+            $this->mediaFolderRepository->allByParent($parentId)
+        );
+        sort($siblingFolderIds, SORT_NUMERIC);
+
+        $sortedOrderedIds = $orderedIds;
+        sort($sortedOrderedIds, SORT_NUMERIC);
+
+        if ($sortedOrderedIds !== $siblingFolderIds) {
+            $this->redirect('/admin/media/folders?error=Folder+list+is+out+of+sync.+Please+reload+and+try+again' . $scopeQuery);
+            return;
+        }
+
+        if (!$this->mediaFolderRepository->reorderWithinParent($parentId, $orderedIds)) {
+            $this->redirect('/admin/media/folders?error=Could+not+save+folder+order' . $scopeQuery);
+            return;
+        }
+
+        $this->redirect('/admin/media/folders?success=Folder+order+updated' . $scopeQuery);
     }
 
     public function editFolder(): void
@@ -685,6 +782,11 @@ class MediaAdminController extends Controller
 
         if ($form['source_url'] !== '' && !$this->isValidOptionalUrl($form['source_url'])) {
             $errors['source_url'] = 'Source URL must be a valid URL.';
+        }
+
+        $tagNames = $this->parseCommaSeparatedTags($form['tags']);
+        if (count($tagNames) > 3) {
+            $errors['tags'] = 'Maximal 3 Tags pro Medium erlaubt.';
         }
 
         if ($form['rename_physical']) {

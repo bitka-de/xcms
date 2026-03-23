@@ -31,9 +31,7 @@ class Database
                 ]
             );
 
-            if ($isNewDb) {
-                self::$instance->exec('PRAGMA foreign_keys = ON');
-            }
+            self::$instance->exec('PRAGMA foreign_keys = ON');
         } catch (\PDOException $e) {
             throw new \RuntimeException('Database connection failed: ' . $e->getMessage());
         }

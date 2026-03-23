@@ -11,15 +11,111 @@ class MediaFolderRepository extends BaseRepository
 
     public function all(): array
     {
-        $stmt = $this->db->query("SELECT * FROM {$this->table} ORDER BY name ASC");
+        $stmt = $this->db->query("SELECT * FROM {$this->table} ORDER BY sort_order ASC, name ASC");
         return $this->hydrateAll($stmt->fetchAll(\PDO::FETCH_ASSOC));
     }
 
     public function allWithParents(): array
     {
-        $stmt = $this->db->query("\n            SELECT f.*, p.name AS parent_name\n            FROM {$this->table} f\n            LEFT JOIN {$this->table} p ON p.id = f.parent_id\n            ORDER BY COALESCE(p.name, ''), f.name ASC\n        ");
+        $stmt = $this->db->query("\n            SELECT f.*, p.name AS parent_name\n            FROM {$this->table} f\n            LEFT JOIN {$this->table} p ON p.id = f.parent_id\n            ORDER BY f.sort_order ASC, f.name ASC\n        ");
 
         return $this->hydrateAll($stmt->fetchAll(\PDO::FETCH_ASSOC));
+    }
+
+    public function allByParent(?int $parentId): array
+    {
+        if ($parentId === null) {
+            $stmt = $this->db->query("SELECT * FROM {$this->table} WHERE parent_id IS NULL ORDER BY sort_order ASC, name ASC");
+            return $this->hydrateAll($stmt->fetchAll(\PDO::FETCH_ASSOC));
+        }
+
+        $stmt = $this->db->prepare("SELECT * FROM {$this->table} WHERE parent_id = ? ORDER BY sort_order ASC, name ASC");
+        $stmt->execute([$parentId]);
+
+        return $this->hydrateAll($stmt->fetchAll(\PDO::FETCH_ASSOC));
+    }
+
+    public function getNextSortOrder(): int
+    {
+        $stmt = $this->db->query("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM {$this->table}");
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function getNextSortOrderForParent(?int $parentId): int
+    {
+        if ($parentId === null) {
+            $stmt = $this->db->query("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM {$this->table} WHERE parent_id IS NULL");
+            return (int) $stmt->fetchColumn();
+        }
+
+        $stmt = $this->db->prepare("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM {$this->table} WHERE parent_id = ?");
+        $stmt->execute([$parentId]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function reorderByIds(array $orderedFolderIds): bool
+    {
+        if ($orderedFolderIds === []) {
+            return false;
+        }
+
+        $this->db->beginTransaction();
+
+        try {
+            $stmt = $this->db->prepare("UPDATE {$this->table} SET sort_order = ? WHERE id = ?");
+            $position = 1;
+
+            foreach ($orderedFolderIds as $folderId) {
+                $stmt->execute([$position, (int) $folderId]);
+                $position++;
+            }
+
+            $this->db->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+
+            return false;
+        }
+    }
+
+    public function reorderWithinParent(?int $parentId, array $orderedFolderIds): bool
+    {
+        if ($orderedFolderIds === []) {
+            return false;
+        }
+
+        $this->db->beginTransaction();
+
+        try {
+            if ($parentId === null) {
+                $stmt = $this->db->prepare("UPDATE {$this->table} SET sort_order = ? WHERE id = ? AND parent_id IS NULL");
+            } else {
+                $stmt = $this->db->prepare("UPDATE {$this->table} SET sort_order = ? WHERE id = ? AND parent_id = ?");
+            }
+
+            $position = 1;
+            foreach ($orderedFolderIds as $folderId) {
+                $params = $parentId === null
+                    ? [$position, (int) $folderId]
+                    : [$position, (int) $folderId, $parentId];
+
+                $stmt->execute($params);
+                $position++;
+            }
+
+            $this->db->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+
+            return false;
+        }
     }
 
     public function hasChildren(int $folderId): bool
@@ -93,7 +189,7 @@ class MediaFolderRepository extends BaseRepository
 
     public function getIdNameMap(): array
     {
-        $stmt = $this->db->query("SELECT id, name FROM {$this->table} ORDER BY name ASC");
+        $stmt = $this->db->query("SELECT id, name FROM {$this->table} ORDER BY sort_order ASC, name ASC");
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
         $map = [];
